@@ -17,6 +17,7 @@ import {
   estimateProjectUsage,
   estimateTokensFromText,
 } from "./db.ts";
+import { MODEL_CATALOG } from "./model-catalog.ts";
 
 function tempDb() {
   const dir = mkdtempSync(join(tmpdir(), "tp-conso-"));
@@ -42,7 +43,18 @@ test("auth sécurisée + isolation projet", () => {
   }
 });
 
-test("providers/modèles par défaut + données dashboard", () => {
+test("catalogue KIRO enrichi : catégories et tarifs API automatiques", () => {
+  const categories = new Set(MODEL_CATALOG.map((m) => m.category));
+  assert.ok(categories.has("text"));
+  assert.ok(categories.has("image"));
+  assert.ok(categories.has("search"));
+  assert.ok(categories.has("tts"));
+  assert.ok(categories.has("stt"));
+  assert.ok(MODEL_CATALOG.some((m) => m.providerSlug === "openai" && m.apiModelId === "gpt-4.1-2025-04-14" && m.inputPricePerMillion === 2 && m.outputPricePerMillion === 8));
+  assert.ok(MODEL_CATALOG.some((m) => m.category === "image" && m.imagePrice !== null));
+});
+
+test("providers/modèles par défaut + données dashboard enrichies KIRO", () => {
   const { dbPath, cleanup } = tempDb();
   try {
     initDb(dbPath);
@@ -56,6 +68,8 @@ test("providers/modèles par défaut + données dashboard", () => {
     assert.ok(data.models.some((m) => m.name === "GPT-4.1"));
     assert.ok(data.models.some((m) => m.providerName === "Ollama / Lenovo local"));
     assert.ok(data.models.some((m) => m.inputPricePerMillion !== null));
+    assert.ok(data.models.some((m) => m.category === "image" && m.imagePrice !== null));
+    assert.ok(data.models.some((m) => m.category === "stt" && m.pricingUnit === "audio_minute"));
   } finally {
     cleanup();
   }
@@ -152,7 +166,7 @@ test("estimation automatique tokens/coût pour configuration API", () => {
     const openai = data.providers.find((p) => p.name === "OpenAI")!;
     const gpt = data.models.find((m) => m.name === "GPT-4.1")!;
     const api = createAiAccount(dbPath, rudy.id, { providerId: openai.id, name: "OpenAI API TorquePilot", connectionType: "api" });
-    const setup = assignAiAccountToProject(dbPath, rudy.id, { projectId: project.id, accountId: api.id, modelId: gpt.id, inputPricePerMillion: 2, outputPricePerMillion: 8 });
+    const setup = assignAiAccountToProject(dbPath, rudy.id, { projectId: project.id, accountId: api.id, modelId: gpt.id });
 
     const inputText = "a".repeat(4000);
     const outputText = "b".repeat(2000);

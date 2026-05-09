@@ -67,8 +67,6 @@ async function assignAiSetupAction(formData: FormData) {
   const userId = await currentUserId();
   if (!userId) redirect("/");
   const projectId = Number(formData.get("projectId") || 0);
-  const inputPriceRaw = String(formData.get("inputPricePerMillion") || "").trim();
-  const outputPriceRaw = String(formData.get("outputPricePerMillion") || "").trim();
   try {
     assignAiAccountToProject(DB_PATH, userId, {
       projectId,
@@ -76,8 +74,6 @@ async function assignAiSetupAction(formData: FormData) {
       modelId: Number(formData.get("modelId") || 0) || null,
       connectionType: String(formData.get("connectionType") || "subscription") as any,
       label: String(formData.get("label") || ""),
-      inputPricePerMillion: inputPriceRaw ? Number(inputPriceRaw) : undefined,
-      outputPricePerMillion: outputPriceRaw ? Number(outputPriceRaw) : undefined,
     });
     revalidatePath("/");
   } catch { redirect(`/?project=${projectId || ""}&error=Affectation IA refusée`); }
@@ -113,6 +109,18 @@ function AuthScreen({ error }: { error?: string }) {
 }
 function euro(value: number) { return `${value.toFixed(4)} €`; }
 function price(value: number | null) { return value == null ? "à préciser" : `${value} €/M tok`; }
+function categoryLabel(value: string) {
+  const labels: Record<string, string> = { text: "Texte", image: "Image", search: "Recherche", tts: "TTS", stt: "STT", local: "Local" };
+  return labels[value] || value;
+}
+function modelPriceDetail(model: { inputPricePerMillion: number | null; outputPricePerMillion: number | null; imagePrice?: number | null; pricingUnit?: string }) {
+  const base = `Input ${price(model.inputPricePerMillion)} · Output ${price(model.outputPricePerMillion)}`;
+  if (model.imagePrice != null) return `${base} · Image ${model.imagePrice} €/unité`;
+  if (model.pricingUnit === "audio_minute") return `${base} · Audio/min`;
+  if (model.pricingUnit === "character") return `${base} · Caractères`;
+  if (model.pricingUnit === "local") return "Local · coût API 0 €";
+  return base;
+}
 function connectionLabel(value: string) { return value === "api" ? "API" : value === "local" ? "Local" : "Abonnement"; }
 
 export default async function Home({ searchParams }: { searchParams?: Promise<{ error?: string; project?: string }> }) {
@@ -126,6 +134,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
   const data = listDashboardData(DB_PATH, user.id, selectedProjectId);
   const selectedProject = data.selectedProject;
   const apiSetups = data.projectAiSetups.filter((s) => s.connectionType === "api");
+  const categoryCounts = data.models.reduce<Record<string, number>>((acc, model) => { acc[model.category] = (acc[model.category] || 0) + 1; return acc; }, {});
   const stats = [
     ["Projets", String(data.projects.length), "isolés par utilisateur"],
     ["Comptes IA", String(data.aiAccounts.length), "abonnements/API/local"],
@@ -134,7 +143,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
   ];
 
   return <main className="shell">
-    <section className="hero"><div><p className="eyebrow">Connecté : {user.email}</p><h1>TorquePilot AI Conso</h1><p className="subtitle">Phase 3 : on déclare les comptes IA, le type abonnement/API, le modèle, puis on affecte tout au projet.</p></div><form action={logoutAction}><button className="ghost">Déconnexion</button></form></section>
+    <section className="hero"><div><p className="eyebrow">Connecté : {user.email}</p><h1>TorquePilot AI Conso</h1><p className="subtitle">Phase 4A : catalogue KIRO intégré, tarifs modèles automatiques et estimation sans saisie manuelle de tokens/coûts.</p></div><form action={logoutAction}><button className="ghost">Déconnexion</button></form></section>
     {params?.error && <p className="alert">{params.error}</p>}
     <section className="grid stats">{stats.map(([label, value, hint]) => <article className="card" key={label}><span>{label}</span><strong>{value}</strong><small>{hint}</small></article>)}</section>
 
@@ -143,7 +152,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
         <form action={createProjectAction} className="inlineForm"><input name="name" placeholder="Nom projet ex: TorquePilot RAG" required /><input name="description" placeholder="Description" /><button>Ajouter projet</button></form>
         <div className="projectTabs">{data.projects.length ? data.projects.map((p) => <a className={selectedProject?.id === p.id ? "tab active" : "tab"} href={`/?project=${p.id}`} key={p.id}><strong>{p.name}</strong><small>{p.description || "Sans description"}</small></a>) : <p className="muted">Dashboard vierge : ajoute ton premier projet.</p>}</div>
       </article>
-      <aside className="panel"><h2>Modèles IA</h2><ul className="tasks">{data.models.slice(0, 12).map((m) => <li key={m.id}><span>{m.providerName}</span><strong>{m.name}</strong><small>Input {price(m.inputPricePerMillion)} · Output {price(m.outputPricePerMillion)}</small></li>)}</ul></aside>
+      <aside className="panel"><h2>Catalogue IA automatique</h2><p className="muted">KIRO v3.0 : {data.models.length} modèles · {Object.entries(categoryCounts).map(([cat, count]) => `${categoryLabel(cat)} ${count}`).join(" · ")}</p><ul className="tasks">{data.models.slice(0, 14).map((m) => <li key={m.id}><span>{m.providerName} · {categoryLabel(m.category)}</span><strong>{m.name}</strong><small>{modelPriceDetail(m)}</small></li>)}</ul></aside>
     </section>
 
     <section className="layout usageLayout">
@@ -168,11 +177,10 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
         {selectedProject && data.aiAccounts.length ? <form action={assignAiSetupAction} className="usageForm">
           <input type="hidden" name="projectId" value={selectedProject.id} />
           <label>Compte IA<select name="accountId" required>{data.aiAccounts.map((a) => <option value={a.id} key={a.id}>{a.name} — {connectionLabel(a.connectionType)}</option>)}</select></label>
-          <label>Modèle<select name="modelId" required>{data.models.map((m) => <option value={m.id} key={m.id}>{m.providerName} — {m.name}</option>)}</select></label>
+          <label>Modèle<select name="modelId" required>{data.models.map((m) => <option value={m.id} key={m.id}>{m.providerName} — {m.name} · {categoryLabel(m.category)}</option>)}</select></label>
           <label>Type pour ce projet<select name="connectionType" defaultValue="subscription"><option value="subscription">Abonnement</option><option value="api">API</option><option value="local">Local</option></select></label>
           <label>Libellé<input name="label" placeholder="Ex: Compte principal TorquePilot" /></label>
-          <label>Prix input €/M tokens<input name="inputPricePerMillion" type="number" min="0" step="0.000001" placeholder="si API" /></label>
-          <label>Prix output €/M tokens<input name="outputPricePerMillion" type="number" min="0" step="0.000001" placeholder="si API" /></label>
+          <p className="muted">Les prix ne sont plus saisis manuellement : ils viennent automatiquement du catalogue KIRO/SQLite selon le modèle choisi.</p>
           <button>Affecter au projet</button>
         </form> : <p className="muted">Ajoute d’abord un projet et un compte IA.</p>}
       </article>
@@ -185,8 +193,8 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
           <input type="hidden" name="projectId" value={selectedProject.id} />
           <label>Configuration IA<select name="setupId" required>{data.projectAiSetups.map((s) => <option value={s.id} key={s.id}>{s.label} — {connectionLabel(s.connectionType)}</option>)}</select></label>
           <label>Libellé<input name="label" placeholder="Ex: session debug, génération contenu" required /></label>
-          <label>Texte entrée<textarea name="inputText" placeholder="Colle ici le prompt, la demande ou le log entrée" rows={5}></textarea></label>
-          <label>Texte sortie<textarea name="outputText" placeholder="Colle ici la réponse IA ou le log sortie" rows={5}></textarea></label>
+          <label>Texte entrée<textarea name="inputText" placeholder="Colle le prompt/log entrée : tokens et coût seront calculés automatiquement" rows={5}></textarea></label>
+          <label>Texte sortie<textarea name="outputText" placeholder="Colle la réponse/log sortie : aucune saisie manuelle de tokens/coût" rows={5}></textarea></label>
           <label>Date<input name="usedAt" type="date" defaultValue={new Date().toISOString().slice(0, 10)} /></label>
           <button>Estimer tokens et coût</button>
           {!apiSetups.length && <p className="muted">Pour un abonnement, les tokens seront estimés mais le coût par requête reste à 0 €. Le coût mensuel est suivi côté abonnement.</p>}

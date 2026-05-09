@@ -2,11 +2,25 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { MODEL_CATALOG, type ModelCategory } from "./model-catalog.ts";
 
 export type User = { id: number; email: string; passwordHash: string };
 export type Project = { id: number; name: string; description: string | null; ownerUserId: number };
 export type Provider = { id: number; name: string; kind: string };
-export type Model = { id: number; providerId: number; providerName: string; name: string; inputPricePerMillion: number | null; outputPricePerMillion: number | null };
+export type Model = {
+  id: number;
+  providerId: number;
+  providerName: string;
+  name: string;
+  apiModelId: string | null;
+  category: ModelCategory;
+  inputPricePerMillion: number | null;
+  outputPricePerMillion: number | null;
+  imagePrice: number | null;
+  pricingUnit: string;
+  description: string | null;
+  source: string | null;
+};
 export type ConnectionType = "subscription" | "api" | "local";
 export type AiAccount = {
   id: number;
@@ -68,6 +82,12 @@ function columnExists(db: DatabaseSync, table: string, column: string) {
 function migrate(db: DatabaseSync) {
   if (!columnExists(db, "ai_models", "input_price_per_million")) db.exec("ALTER TABLE ai_models ADD COLUMN input_price_per_million REAL");
   if (!columnExists(db, "ai_models", "output_price_per_million")) db.exec("ALTER TABLE ai_models ADD COLUMN output_price_per_million REAL");
+  if (!columnExists(db, "ai_models", "api_model_id")) db.exec("ALTER TABLE ai_models ADD COLUMN api_model_id TEXT");
+  if (!columnExists(db, "ai_models", "category")) db.exec("ALTER TABLE ai_models ADD COLUMN category TEXT NOT NULL DEFAULT 'text'");
+  if (!columnExists(db, "ai_models", "image_price")) db.exec("ALTER TABLE ai_models ADD COLUMN image_price REAL");
+  if (!columnExists(db, "ai_models", "pricing_unit")) db.exec("ALTER TABLE ai_models ADD COLUMN pricing_unit TEXT NOT NULL DEFAULT 'token'");
+  if (!columnExists(db, "ai_models", "description")) db.exec("ALTER TABLE ai_models ADD COLUMN description TEXT");
+  if (!columnExists(db, "ai_models", "source")) db.exec("ALTER TABLE ai_models ADD COLUMN source TEXT");
   if (!columnExists(db, "ai_usage_entries", "account_id")) db.exec("ALTER TABLE ai_usage_entries ADD COLUMN account_id INTEGER REFERENCES ai_accounts(id)");
   if (!columnExists(db, "ai_usage_entries", "setup_id")) db.exec("ALTER TABLE ai_usage_entries ADD COLUMN setup_id INTEGER REFERENCES project_ai_setups(id)");
   if (!columnExists(db, "ai_usage_entries", "estimation_method")) db.exec("ALTER TABLE ai_usage_entries ADD COLUMN estimation_method TEXT");
@@ -81,7 +101,20 @@ export function initDb(dbPath = defaultDbPath) {
     CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, description TEXT, owner_user_id INTEGER NOT NULL REFERENCES users(id), created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS project_members (project_id INTEGER NOT NULL REFERENCES projects(id), user_id INTEGER NOT NULL REFERENCES users(id), role TEXT NOT NULL DEFAULT 'owner', PRIMARY KEY(project_id, user_id));
     CREATE TABLE IF NOT EXISTS ai_providers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, kind TEXT NOT NULL DEFAULT 'manual');
-    CREATE TABLE IF NOT EXISTS ai_models (id INTEGER PRIMARY KEY AUTOINCREMENT, provider_id INTEGER NOT NULL REFERENCES ai_providers(id), name TEXT NOT NULL, input_price_per_million REAL, output_price_per_million REAL, UNIQUE(provider_id, name));
+    CREATE TABLE IF NOT EXISTS ai_models (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider_id INTEGER NOT NULL REFERENCES ai_providers(id),
+      name TEXT NOT NULL,
+      api_model_id TEXT,
+      category TEXT NOT NULL DEFAULT 'text',
+      input_price_per_million REAL,
+      output_price_per_million REAL,
+      image_price REAL,
+      pricing_unit TEXT NOT NULL DEFAULT 'token',
+      description TEXT,
+      source TEXT,
+      UNIQUE(provider_id, name)
+    );
     CREATE TABLE IF NOT EXISTS ai_accounts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL REFERENCES users(id),
@@ -174,26 +207,26 @@ export function userCanAccessProject(dbPath: string, userId: number, projectId: 
 
 export function seedDefaultProviders(dbPath = defaultDbPath) {
   initDb(dbPath); const db = open(dbPath);
-  const providers = [
-    { name: "OpenAI", models: [["GPT-4.1", 2, 8], ["GPT-4.1 mini", 0.4, 1.6], ["GPT-4o", 2.5, 10], ["o3", 2, 8]] },
-    { name: "OpenRouter", models: [["Claude Sonnet via OpenRouter", null, null], ["Kimi K2 via OpenRouter", null, null], ["DeepSeek via OpenRouter", null, null]] },
-    { name: "Kimi", models: [["Kimi K2", null, null], ["Moonshot v1", null, null]] },
-    { name: "Ollama / Lenovo local", models: [["llama3.1 local", 0, 0], ["qwen local", 0, 0], ["mistral local", 0, 0]] },
-    { name: "Mistral", models: [["Mistral Large", 2, 6], ["Codestral", 0.3, 0.9]] },
-    { name: "Claude", models: [["Claude Sonnet", 3, 15], ["Claude Opus", 15, 75]] },
-    { name: "Gemini", models: [["Gemini 2.5 Pro", 1.25, 10], ["Gemini 2.5 Flash", 0.3, 2.5]] },
-    { name: "Groq", models: [["Llama via Groq", null, null], ["Mixtral via Groq", null, null]] },
-    { name: "Autre", models: [["Modèle manuel", null, null]] },
-  ];
-  for (const provider of providers) {
-    db.prepare("INSERT OR IGNORE INTO ai_providers(name, kind) VALUES (?, 'manual')").run(provider.name);
-    const providerRow = db.prepare("SELECT id FROM ai_providers WHERE name = ?").get(provider.name) as any;
-    for (const [name, inputPrice, outputPrice] of provider.models) {
-      db.prepare("INSERT OR IGNORE INTO ai_models(provider_id, name, input_price_per_million, output_price_per_million) VALUES (?, ?, ?, ?)").run(providerRow.id, name, inputPrice, outputPrice);
-      db.prepare("UPDATE ai_models SET input_price_per_million = coalesce(input_price_per_million, ?), output_price_per_million = coalesce(output_price_per_million, ?) WHERE provider_id = ? AND name = ?").run(inputPrice, outputPrice, providerRow.id, name);
+  try {
+    for (const model of MODEL_CATALOG) {
+      db.prepare("INSERT OR IGNORE INTO ai_providers(name, kind) VALUES (?, 'catalog')").run(model.providerName);
+      const providerRow = db.prepare("SELECT id FROM ai_providers WHERE name = ?").get(model.providerName) as any;
+      db.prepare(`INSERT OR IGNORE INTO ai_models(provider_id, name, api_model_id, category, input_price_per_million, output_price_per_million, image_price, pricing_unit, description, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(providerRow.id, model.name, model.apiModelId, model.category, model.inputPricePerMillion, model.outputPricePerMillion, model.imagePrice, model.pricingUnit, model.description, model.source);
+      db.prepare(`UPDATE ai_models SET
+          api_model_id = coalesce(api_model_id, ?),
+          category = CASE WHEN category IS NULL OR category = 'text' THEN ? ELSE category END,
+          input_price_per_million = coalesce(input_price_per_million, ?),
+          output_price_per_million = coalesce(output_price_per_million, ?),
+          image_price = coalesce(image_price, ?),
+          pricing_unit = CASE WHEN pricing_unit IS NULL OR pricing_unit = 'token' THEN ? ELSE pricing_unit END,
+          description = coalesce(description, ?),
+          source = coalesce(source, ?)
+        WHERE provider_id = ? AND name = ?`)
+        .run(model.apiModelId, model.category, model.inputPricePerMillion, model.outputPricePerMillion, model.imagePrice, model.pricingUnit, model.description, model.source, providerRow.id, model.name);
     }
-  }
-  db.close();
+  } finally { db.close(); }
 }
 
 export function createAiAccount(dbPath: string, userId: number, input: AiAccountInput): AiAccount {
@@ -239,7 +272,7 @@ export function recordUsageEntry(dbPath: string, userId: number, input: UsageInp
     if (!db.prepare("SELECT 1 FROM project_members WHERE user_id = ? AND project_id = ?").get(userId, input.projectId)) throw new Error("Accès projet refusé");
     const modelId = input.modelId ? Number(input.modelId) : null;
     if (modelId && !db.prepare("SELECT 1 FROM ai_models WHERE id = ?").get(modelId)) throw new Error("Modèle IA inconnu");
-    const result = db.prepare(`INSERT INTO ai_usage_entries(project_id, model_id, label, input_tokens, output_tokens, cost_eur, used_at) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(input.projectId, modelId, input.label.trim() || "Saisie manuelle", toNonNegativeInteger(input.inputTokens), toNonNegativeInteger(input.outputTokens), toNonNegativeMoney(input.costEur), input.usedAt?.trim() || new Date().toISOString().slice(0, 10));
+    const result = db.prepare(`INSERT INTO ai_usage_entries(project_id, model_id, label, input_tokens, output_tokens, cost_eur, used_at) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(input.projectId, modelId, input.label.trim() || "Usage estimé", toNonNegativeInteger(input.inputTokens), toNonNegativeInteger(input.outputTokens), toNonNegativeMoney(input.costEur), input.usedAt?.trim() || new Date().toISOString().slice(0, 10));
     return usageById(db, Number(result.lastInsertRowid));
   } finally { db.close(); }
 }
@@ -273,7 +306,7 @@ export function listDashboardData(dbPath: string, userId: number, selectedProjec
   initDb(dbPath); seedDefaultProviders(dbPath); const db = open(dbPath);
   const projects = db.prepare(`SELECT p.id, p.name, p.description, p.owner_user_id as ownerUserId FROM projects p JOIN project_members pm ON pm.project_id = p.id WHERE pm.user_id = ? ORDER BY p.id DESC`).all(userId) as Project[];
   const providers = db.prepare("SELECT id, name, kind FROM ai_providers ORDER BY id").all() as Provider[];
-  const models = db.prepare(`SELECT m.id, m.provider_id as providerId, p.name as providerName, m.name, m.input_price_per_million as inputPricePerMillion, m.output_price_per_million as outputPricePerMillion FROM ai_models m JOIN ai_providers p ON p.id = m.provider_id ORDER BY p.id, m.id`).all() as Model[];
+  const models = db.prepare(`SELECT m.id, m.provider_id as providerId, p.name as providerName, m.name, m.api_model_id as apiModelId, m.category, m.input_price_per_million as inputPricePerMillion, m.output_price_per_million as outputPricePerMillion, m.image_price as imagePrice, m.pricing_unit as pricingUnit, m.description, m.source FROM ai_models m JOIN ai_providers p ON p.id = m.provider_id ORDER BY p.name, m.category, m.name`).all() as Model[];
   const selectedProject = projects.find((p) => p.id === selectedProjectId) ?? projects[0] ?? null;
   const aiAccounts = db.prepare(`SELECT a.id, a.user_id as userId, a.provider_id as providerId, p.name as providerName, a.name, a.connection_type as connectionType, a.subscription_name as subscriptionName, a.monthly_cost_eur as monthlyCostEur, a.notes FROM ai_accounts a LEFT JOIN ai_providers p ON p.id = a.provider_id WHERE a.user_id = ? ORDER BY a.id DESC`).all(userId).map(rowToAccount);
   const projectAiSetups = selectedProject ? db.prepare(`SELECT s.id, s.project_id as projectId, p.name as projectName, s.account_id as accountId, a.name as accountName, pr.name as providerName, s.model_id as modelId, m.name as modelName, s.connection_type as connectionType, a.subscription_name as subscriptionName, a.monthly_cost_eur as monthlyCostEur, s.input_price_per_million as inputPricePerMillion, s.output_price_per_million as outputPricePerMillion, s.label
