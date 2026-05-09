@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { DB_PATH, assignAiAccountToProject, createAiAccount, createProject, createUser, estimateProjectUsage, getUserById, listDashboardData, seedDefaultProviders, verifyUser } from "../lib/db";
+import { DB_PATH, assignAiAccountToProject, createAiAccount, createProject, createUser, estimateProjectUsage, getUserById, importAutomaticUsage, listDashboardData, seedDefaultProviders, verifyUser } from "../lib/db";
 import { makeSession, readSession } from "../lib/session";
 
 export const dynamic = "force-dynamic";
@@ -97,6 +97,23 @@ async function estimateUsageAction(formData: FormData) {
   } catch { redirect(`/?project=${projectId || ""}&error=Estimation refusée`); }
   redirect(`/?project=${projectId}`);
 }
+async function importUsageAction(formData: FormData) {
+  "use server";
+  const userId = await currentUserId();
+  if (!userId) redirect("/");
+  const projectId = Number(formData.get("projectId") || 0);
+  try {
+    importAutomaticUsage(DB_PATH, userId, {
+      projectId,
+      setupId: Number(formData.get("setupId") || 0),
+      sourceName: String(formData.get("sourceName") || ""),
+      rawExport: String(formData.get("rawExport") || ""),
+      usedAt: String(formData.get("usedAt") || ""),
+    });
+    revalidatePath("/");
+  } catch { redirect(`/?project=${projectId || ""}&error=Import automatique refusé`); }
+  redirect(`/?project=${projectId}`);
+}
 function AuthScreen({ error }: { error?: string }) {
   return <main className="shell">
     <section className="hero"><div><p className="eyebrow">Dashboard local sécurisé</p><h1>TorquePilot AI Conso</h1><p className="subtitle">Crée ton compte local puis pilote projets, comptes IA, abonnements/API et estimations de coût.</p></div><div className="badge">MVP auth</div></section>
@@ -143,7 +160,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
   ];
 
   return <main className="shell">
-    <section className="hero"><div><p className="eyebrow">Connecté : {user.email}</p><h1>TorquePilot AI Conso</h1><p className="subtitle">Phase 4A : catalogue KIRO intégré, tarifs modèles automatiques et estimation sans saisie manuelle de tokens/coûts.</p></div><form action={logoutAction}><button className="ghost">Déconnexion</button></form></section>
+    <section className="hero"><div><p className="eyebrow">Connecté : {user.email}</p><h1>TorquePilot AI Conso</h1><p className="subtitle">Phase 4B : collecte automatique réelle depuis exports/logs JSON, JSONL ou conversations collées, avec calcul tokens/coûts sans saisie manuelle.</p></div><form action={logoutAction}><button className="ghost">Déconnexion</button></form></section>
     {params?.error && <p className="alert">{params.error}</p>}
     <section className="grid stats">{stats.map(([label, value, hint]) => <article className="card" key={label}><span>{label}</span><strong>{value}</strong><small>{hint}</small></article>)}</section>
 
@@ -188,19 +205,34 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
     </section>
 
     <section className="layout usageLayout">
-      <article className="panel"><div className="sectionHeader"><div><p className="eyebrow">Estimation</p><h2>Texte → tokens/coût</h2></div></div>
+      <article className="panel"><div className="sectionHeader"><div><p className="eyebrow">Collecte automatique Phase 4B</p><h2>Importer logs / exports réels</h2></div></div>
+        {selectedProject && data.projectAiSetups.length ? <form action={importUsageAction} className="usageForm">
+          <input type="hidden" name="projectId" value={selectedProject.id} />
+          <label>Configuration IA<select name="setupId" required>{data.projectAiSetups.map((s) => <option value={s.id} key={s.id}>{s.label} — {connectionLabel(s.connectionType)}</option>)}</select></label>
+          <label>Source<input name="sourceName" placeholder="Ex: OpenAI export, Claude JSONL, Ollama logs" defaultValue="Import automatique" /></label>
+          <label>Export JSON / JSONL / conversation<textarea name="rawExport" placeholder={'JSON accepté : {"usage":{"prompt_tokens":1200,"completion_tokens":350},"model":"..."}\nJSONL accepté : une requête par ligne\nTexte accepté : User: ... Assistant: ...'} rows={8} required></textarea></label>
+          <label>Date par défaut<input name="usedAt" type="date" defaultValue={new Date().toISOString().slice(0, 10)} /></label>
+          <button>Importer automatiquement</button>
+          <p className="muted">Aucune saisie manuelle de tokens/coûts : si les tokens existent dans l’export ils sont lus, sinon ils sont estimés depuis le texte, puis le coût est calculé avec le catalogue modèle.</p>
+        </form> : <p className="muted">Affecte d’abord un compte IA au projet.</p>}
+      </article>
+      <aside className="panel"><div className="sectionHeader"><div><p className="eyebrow">Fallback temporaire</p><h2>Conversation isolée</h2></div></div>
         {selectedProject && data.projectAiSetups.length ? <form action={estimateUsageAction} className="usageForm">
           <input type="hidden" name="projectId" value={selectedProject.id} />
           <label>Configuration IA<select name="setupId" required>{data.projectAiSetups.map((s) => <option value={s.id} key={s.id}>{s.label} — {connectionLabel(s.connectionType)}</option>)}</select></label>
           <label>Libellé<input name="label" placeholder="Ex: session debug, génération contenu" required /></label>
-          <label>Texte entrée<textarea name="inputText" placeholder="Colle le prompt/log entrée : tokens et coût seront calculés automatiquement" rows={5}></textarea></label>
-          <label>Texte sortie<textarea name="outputText" placeholder="Colle la réponse/log sortie : aucune saisie manuelle de tokens/coût" rows={5}></textarea></label>
+          <label>Texte entrée<textarea name="inputText" placeholder="Prompt/log entrée : tokens et coût seront calculés automatiquement" rows={4}></textarea></label>
+          <label>Texte sortie<textarea name="outputText" placeholder="Réponse/log sortie : aucune saisie manuelle de tokens/coût" rows={4}></textarea></label>
           <label>Date<input name="usedAt" type="date" defaultValue={new Date().toISOString().slice(0, 10)} /></label>
-          <button>Estimer tokens et coût</button>
+          <button>Estimer depuis texte</button>
           {!apiSetups.length && <p className="muted">Pour un abonnement, les tokens seront estimés mais le coût par requête reste à 0 €. Le coût mensuel est suivi côté abonnement.</p>}
         </form> : <p className="muted">Affecte d’abord un compte IA au projet.</p>}
-      </article>
-      <aside className="panel"><h2>Historique estimations</h2><div className="list">{data.usageEntries.length ? data.usageEntries.map((e) => <div className="row compact" key={e.id}><div><h3>{e.label}</h3><p>{e.providerName || "IA"} · {e.modelName || "Modèle"} · {e.usedAt}</p></div><span className="pill">{e.totalTokens.toLocaleString("fr-FR")} tok · {euro(e.costEur)}</span></div>) : <p className="muted">Aucune estimation saisie pour ce projet.</p>}</div></aside>
+      </aside>
+    </section>
+
+    <section className="layout usageLayout">
+      <article className="panel"><h2>Historique automatique</h2><div className="list">{data.usageEntries.length ? data.usageEntries.map((e) => <div className="row compact" key={e.id}><div><h3>{e.label}</h3><p>{e.providerName || "IA"} · {e.modelName || "Modèle"} · {e.usedAt}</p></div><span className="pill">{e.totalTokens.toLocaleString("fr-FR")} tok · {euro(e.costEur)}</span></div>) : <p className="muted">Aucun usage collecté pour ce projet.</p>}</div></article>
+      <aside className="panel"><h2>Formats acceptés</h2><ul className="tasks"><li><span>JSON</span><strong>OpenAI/Anthropic compatible</strong><small>usage.prompt_tokens, usage.completion_tokens, input_tokens, output_tokens</small></li><li><span>JSONL</span><strong>1 ligne = 1 requête</strong><small>import groupé avec total projet automatique</small></li><li><span>Texte</span><strong>User / Assistant</strong><small>fallback estimé depuis caractères quand l’export ne contient pas les tokens</small></li></ul></aside>
     </section>
   </main>;
 }

@@ -16,6 +16,7 @@ import {
   assignAiAccountToProject,
   estimateProjectUsage,
   estimateTokensFromText,
+  importAutomaticUsage,
 } from "./db.ts";
 import { MODEL_CATALOG } from "./model-catalog.ts";
 
@@ -176,6 +177,68 @@ test("estimation automatique tokens/coût pour configuration API", () => {
     assert.equal(entry.costEur, 0.006);
 
     assert.throws(() => estimateProjectUsage(dbPath, other.id, { projectId: project.id, setupId: setup.id, label: "intrusion", inputText: "x", outputText: "y" }), /Accès projet refusé/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("Phase 4B : import automatique JSON/JSONL de logs d'usage", () => {
+  const { dbPath, cleanup } = tempDb();
+  try {
+    initDb(dbPath);
+    seedDefaultProviders(dbPath);
+    const rudy = createUser(dbPath, "rudy@example.local", "secret-test");
+    const other = createUser(dbPath, "other@example.local", "secret-test");
+    const project = createProject(dbPath, rudy.id, "TorquePilot", "RAG mécanique");
+    const data = listDashboardData(dbPath, rudy.id);
+    const openai = data.providers.find((p) => p.name === "OpenAI")!;
+    const gpt = data.models.find((m) => m.name === "GPT-4.1")!;
+    const api = createAiAccount(dbPath, rudy.id, { providerId: openai.id, name: "OpenAI API TorquePilot", connectionType: "api" });
+    const setup = assignAiAccountToProject(dbPath, rudy.id, { projectId: project.id, accountId: api.id, modelId: gpt.id });
+    const rawExport = [
+      JSON.stringify({ timestamp: "2026-05-09T10:00:00Z", model: "gpt-4.1-2025-04-14", prompt_tokens: 1000, completion_tokens: 500, request_id: "req_1" }),
+      JSON.stringify({ created_at: "2026-05-09T11:00:00Z", input_tokens: 2000, output_tokens: 1000, label: "diagnostic" }),
+    ].join("\n");
+
+    const result = importAutomaticUsage(dbPath, rudy.id, { projectId: project.id, setupId: setup.id, sourceName: "OpenAI usage export", rawExport });
+    assert.equal(result.importedCount, 2);
+    assert.equal(result.totalInputTokens, 3000);
+    assert.equal(result.totalOutputTokens, 1500);
+    assert.equal(result.totalCostEur, 0.018);
+    assert.equal(result.entries[0].label, "OpenAI usage export · req_1");
+    assert.equal(result.entries[1].label, "diagnostic");
+
+    const dashboard = listDashboardData(dbPath, rudy.id, project.id);
+    assert.equal(dashboard.projectUsage.tokens, 4500);
+    assert.equal(dashboard.projectUsage.cost, 0.018);
+    assert.equal(dashboard.usageEntries.length, 2);
+
+    assert.throws(() => importAutomaticUsage(dbPath, other.id, { projectId: project.id, setupId: setup.id, sourceName: "intrusion", rawExport }), /Accès projet refusé/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("Phase 4B : import automatique texte brut estime les tokens sans coût manuel", () => {
+  const { dbPath, cleanup } = tempDb();
+  try {
+    initDb(dbPath);
+    seedDefaultProviders(dbPath);
+    const user = createUser(dbPath, "rudy@example.local", "secret-test");
+    const project = createProject(dbPath, user.id, "T.E.D.", "Pilote Tahiti");
+    const data = listDashboardData(dbPath, user.id);
+    const openai = data.providers.find((p) => p.name === "OpenAI")!;
+    const gpt = data.models.find((m) => m.name === "GPT-4.1")!;
+    const account = createAiAccount(dbPath, user.id, { providerId: openai.id, name: "ChatGPT export", connectionType: "subscription", monthlyCostEur: 22 });
+    const setup = assignAiAccountToProject(dbPath, user.id, { projectId: project.id, accountId: account.id, modelId: gpt.id, connectionType: "subscription" });
+
+    const rawExport = `User: ${"p".repeat(400)}\nAssistant: ${"r".repeat(800)}`;
+    const result = importAutomaticUsage(dbPath, user.id, { projectId: project.id, setupId: setup.id, sourceName: "Conversation collée", rawExport, usedAt: "2026-05-09" });
+    assert.equal(result.importedCount, 1);
+    assert.equal(result.totalInputTokens, estimateTokensFromText("p".repeat(400)));
+    assert.equal(result.totalOutputTokens, estimateTokensFromText("r".repeat(800)));
+    assert.equal(result.totalCostEur, 0);
+    assert.equal(result.entries[0].label, "Conversation collée");
   } finally {
     cleanup();
   }

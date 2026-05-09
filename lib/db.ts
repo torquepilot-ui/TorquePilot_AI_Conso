@@ -67,6 +67,8 @@ export type UsageInput = { projectId: number; modelId?: number | null; label: st
 export type AiAccountInput = { providerId?: number | null; name: string; connectionType: ConnectionType; subscriptionName?: string; monthlyCostEur?: number; notes?: string };
 export type ProjectAiSetupInput = { projectId: number; accountId: number; modelId?: number | null; connectionType?: ConnectionType; label?: string; inputPricePerMillion?: number | null; outputPricePerMillion?: number | null };
 export type EstimateInput = { projectId: number; setupId: number; label: string; inputText: string; outputText: string; usedAt?: string };
+export type AutomaticUsageImportInput = { projectId: number; setupId: number; sourceName: string; rawExport: string; usedAt?: string };
+export type AutomaticUsageImportResult = { importedCount: number; totalInputTokens: number; totalOutputTokens: number; totalCostEur: number; entries: UsageEntry[] };
 
 const defaultDbPath = join(process.cwd(), "data", "torquepilot.sqlite");
 
@@ -297,6 +299,99 @@ export function estimateProjectUsage(dbPath: string, userId: number, input: Esti
   } finally { db.close(); }
 }
 
+type ParsedUsageCandidate = { label: string; inputTokens: number; outputTokens: number; usedAt: string; method: string };
+function pickFirstNumber(record: any, keys: string[]) {
+  for (const key of keys) {
+    const value = key.split(".").reduce((acc, part) => acc == null ? undefined : acc[part], record);
+    const n = Number(value);
+    if (Number.isFinite(n) && n >= 0) return Math.round(n);
+  }
+  return null;
+}
+function normalizeUsageRecord(record: any, sourceName: string, fallbackDate: string): ParsedUsageCandidate | null {
+  if (!record || typeof record !== "object") return null;
+  const inputTokens = pickFirstNumber(record, ["input_tokens", "prompt_tokens", "usage.input_tokens", "usage.prompt_tokens", "tokens.input", "inputTokens"]);
+  const outputTokens = pickFirstNumber(record, ["output_tokens", "completion_tokens", "usage.output_tokens", "usage.completion_tokens", "tokens.output", "outputTokens"]);
+  const inputText = String(record.input_text ?? record.prompt ?? record.request ?? "");
+  const outputText = String(record.output_text ?? record.completion ?? record.response ?? "");
+  const finalInput = inputTokens ?? estimateTokensFromText(inputText);
+  const finalOutput = outputTokens ?? estimateTokensFromText(outputText);
+  if (finalInput + finalOutput <= 0) return null;
+  const id = String(record.request_id ?? record.id ?? record.response_id ?? "").trim();
+  const label = String(record.label ?? record.title ?? record.name ?? "").trim() || (id ? `${sourceName} · ${id}` : sourceName);
+  const rawDate = String(record.used_at ?? record.timestamp ?? record.created_at ?? record.createdAt ?? fallbackDate).trim();
+  return { label, inputTokens: finalInput, outputTokens: finalOutput, usedAt: rawDate.slice(0, 10), method: "json_usage_import" };
+}
+function flattenUsagePayload(payload: any): any[] {
+  if (Array.isArray(payload)) return payload;
+  if (!payload || typeof payload !== "object") return [];
+  for (const key of ["data", "records", "requests", "usage", "items"]) if (Array.isArray(payload[key])) return payload[key];
+  return [payload];
+}
+function parseJsonUsage(raw: string, sourceName: string, fallbackDate: string) {
+  const parsed: ParsedUsageCandidate[] = [];
+  try {
+    for (const record of flattenUsagePayload(JSON.parse(raw))) {
+      const candidate = normalizeUsageRecord(record, sourceName, fallbackDate);
+      if (candidate) parsed.push(candidate);
+    }
+    if (parsed.length) return parsed;
+  } catch {}
+  for (const line of raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)) {
+    try {
+      const candidate = normalizeUsageRecord(JSON.parse(line), sourceName, fallbackDate);
+      if (candidate) parsed.push(candidate);
+    } catch {}
+  }
+  return parsed;
+}
+function parseTextUsage(raw: string, sourceName: string, fallbackDate: string): ParsedUsageCandidate[] {
+  const inputMatch = raw.match(/(?:^|\n)\s*(?:user|prompt|input|entrée)\s*:\s*([\s\S]*?)(?=\n\s*(?:assistant|output|sortie|réponse)\s*:|$)/i);
+  const outputMatch = raw.match(/(?:^|\n)\s*(?:assistant|output|sortie|réponse)\s*:\s*([\s\S]*)$/i);
+  const inputText = inputMatch?.[1]?.trim() || raw.trim();
+  const outputText = outputMatch?.[1]?.trim() || "";
+  const inputTokens = estimateTokensFromText(inputText);
+  const outputTokens = estimateTokensFromText(outputText);
+  return inputTokens + outputTokens > 0 ? [{ label: sourceName, inputTokens, outputTokens, usedAt: fallbackDate, method: "text_chars_approx_import" }] : [];
+}
+function parseAutomaticUsage(raw: string, sourceName: string, fallbackDate: string) {
+  const jsonRecords = parseJsonUsage(raw, sourceName, fallbackDate);
+  return jsonRecords.length ? jsonRecords : parseTextUsage(raw, sourceName, fallbackDate);
+}
+
+export function importAutomaticUsage(dbPath: string, userId: number, input: AutomaticUsageImportInput): AutomaticUsageImportResult {
+  initDb(dbPath); seedDefaultProviders(dbPath); const db = open(dbPath);
+  try {
+    if (!db.prepare("SELECT 1 FROM project_members WHERE user_id = ? AND project_id = ?").get(userId, input.projectId)) throw new Error("Accès projet refusé");
+    const setup = getSetupById(db, input.setupId);
+    if (setup.projectId !== input.projectId) throw new Error("Configuration IA hors projet");
+    if (!db.prepare("SELECT 1 FROM ai_accounts WHERE id = ? AND user_id = ?").get(setup.accountId, userId)) throw new Error("Compte IA refusé");
+    const sourceName = input.sourceName.trim() || "Import automatique";
+    const fallbackDate = input.usedAt?.trim() || new Date().toISOString().slice(0, 10);
+    const candidates = parseAutomaticUsage(input.rawExport, sourceName, fallbackDate);
+    if (!candidates.length) throw new Error("Aucun usage importable détecté");
+    const entries: UsageEntry[] = [];
+    db.exec("BEGIN");
+    try {
+      for (const candidate of candidates) {
+        const costEur = setup.connectionType === "api" && setup.inputPricePerMillion != null && setup.outputPricePerMillion != null
+          ? toNonNegativeMoney((candidate.inputTokens / 1_000_000) * setup.inputPricePerMillion + (candidate.outputTokens / 1_000_000) * setup.outputPricePerMillion)
+          : 0;
+        const result = db.prepare(`INSERT INTO ai_usage_entries(project_id, model_id, account_id, setup_id, label, input_tokens, output_tokens, cost_eur, estimation_method, used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(input.projectId, setup.modelId, setup.accountId, setup.id, candidate.label, candidate.inputTokens, candidate.outputTokens, costEur, candidate.method, candidate.usedAt || fallbackDate);
+        entries.push(usageById(db, Number(result.lastInsertRowid)));
+      }
+      db.exec("COMMIT");
+    } catch (error) { db.exec("ROLLBACK"); throw error; }
+    return {
+      importedCount: entries.length,
+      totalInputTokens: entries.reduce((sum, entry) => sum + entry.inputTokens, 0),
+      totalOutputTokens: entries.reduce((sum, entry) => sum + entry.outputTokens, 0),
+      totalCostEur: toNonNegativeMoney(entries.reduce((sum, entry) => sum + entry.costEur, 0)),
+      entries,
+    };
+  } finally { db.close(); }
+}
+
 function usageById(db: DatabaseSync, entryId: number): UsageEntry {
   return rowToEntry(db.prepare(`SELECT e.id, e.project_id as projectId, p.name as projectName, e.model_id as modelId, m.name as modelName, pr.name as providerName, e.label, e.input_tokens as inputTokens, e.output_tokens as outputTokens, e.cost_eur as costEur, e.used_at as usedAt
     FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE e.id = ?`).get(entryId) as any);
@@ -316,7 +411,7 @@ export function listDashboardData(dbPath: string, userId: number, selectedProjec
   const subscriptionMonthly = projectAiSetups.reduce((sum, setup) => sum + (setup.connectionType === "subscription" ? setup.monthlyCostEur : 0), 0);
   const usageEntries = db.prepare(`SELECT e.id, e.project_id as projectId, p.name as projectName, e.model_id as modelId, m.name as modelName, pr.name as providerName, e.label, e.input_tokens as inputTokens, e.output_tokens as outputTokens, e.cost_eur as costEur, e.used_at as usedAt FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id JOIN project_members pm ON pm.project_id = e.project_id AND pm.user_id = ? LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE (? IS NULL OR e.project_id = ?) ORDER BY e.used_at DESC, e.id DESC LIMIT 30`).all(userId, selectedProject?.id ?? null, selectedProject?.id ?? null).map(rowToEntry);
   db.close();
-  return { projects, providers, models, aiAccounts, projectAiSetups, selectedProject, usageEntries, usage: { tokens: Number(usage.tokens), cost: Number(usage.cost) }, projectUsage: { tokens: Number(projectUsage.tokens), cost: Number(projectUsage.cost), subscriptionMonthly } };
+  return { projects, providers, models, aiAccounts, projectAiSetups, selectedProject, usageEntries, usage: { tokens: Number(usage.tokens), cost: toNonNegativeMoney(Number(usage.cost)) }, projectUsage: { tokens: Number(projectUsage.tokens), cost: toNonNegativeMoney(Number(projectUsage.cost)), subscriptionMonthly } };
 }
 
 export const DB_PATH = defaultDbPath;
