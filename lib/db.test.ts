@@ -12,6 +12,10 @@ import {
   seedDefaultProviders,
   listDashboardData,
   recordUsageEntry,
+  createAiAccount,
+  assignAiAccountToProject,
+  estimateProjectUsage,
+  estimateTokensFromText,
 } from "./db.ts";
 
 function tempDb() {
@@ -51,6 +55,7 @@ test("providers/modèles par défaut + données dashboard", () => {
     assert.ok(data.providers.some((p) => p.name === "Ollama / Lenovo local"));
     assert.ok(data.models.some((m) => m.name === "GPT-4.1"));
     assert.ok(data.models.some((m) => m.providerName === "Ollama / Lenovo local"));
+    assert.ok(data.models.some((m) => m.inputPricePerMillion !== null));
   } finally {
     cleanup();
   }
@@ -91,6 +96,72 @@ test("saisie consommation IA isolée par projet", () => {
       outputTokens: 1,
       costEur: 0,
     }), /Accès projet refusé/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("comptes IA abonnement/API affectés au projet", () => {
+  const { dbPath, cleanup } = tempDb();
+  try {
+    initDb(dbPath);
+    seedDefaultProviders(dbPath);
+    const user = createUser(dbPath, "rudy@example.local", "secret-test");
+    const project = createProject(dbPath, user.id, "T.E.D.", "Pilote Tahiti");
+    const data = listDashboardData(dbPath, user.id);
+    const openai = data.providers.find((p) => p.name === "OpenAI")!;
+    const gpt = data.models.find((m) => m.providerName === "OpenAI")!;
+
+    const sub = createAiAccount(dbPath, user.id, {
+      providerId: openai.id,
+      name: "ChatGPT Rudy",
+      connectionType: "subscription",
+      subscriptionName: "ChatGPT Plus",
+      monthlyCostEur: 22,
+    });
+    assert.equal(sub.connectionType, "subscription");
+    assert.equal(sub.monthlyCostEur, 22);
+
+    const setup = assignAiAccountToProject(dbPath, user.id, {
+      projectId: project.id,
+      accountId: sub.id,
+      modelId: gpt.id,
+      label: "Compte principal T.E.D.",
+    });
+    assert.equal(setup.projectId, project.id);
+    assert.equal(setup.subscriptionName, "ChatGPT Plus");
+
+    const dashboard = listDashboardData(dbPath, user.id, project.id);
+    assert.equal(dashboard.aiAccounts.length, 1);
+    assert.equal(dashboard.projectAiSetups.length, 1);
+    assert.equal(dashboard.projectUsage.subscriptionMonthly, 22);
+  } finally {
+    cleanup();
+  }
+});
+
+test("estimation automatique tokens/coût pour configuration API", () => {
+  const { dbPath, cleanup } = tempDb();
+  try {
+    initDb(dbPath);
+    seedDefaultProviders(dbPath);
+    const rudy = createUser(dbPath, "rudy@example.local", "secret-test");
+    const other = createUser(dbPath, "other@example.local", "secret-test");
+    const project = createProject(dbPath, rudy.id, "TorquePilot", "RAG mécanique");
+    const data = listDashboardData(dbPath, rudy.id);
+    const openai = data.providers.find((p) => p.name === "OpenAI")!;
+    const gpt = data.models.find((m) => m.name === "GPT-4.1")!;
+    const api = createAiAccount(dbPath, rudy.id, { providerId: openai.id, name: "OpenAI API TorquePilot", connectionType: "api" });
+    const setup = assignAiAccountToProject(dbPath, rudy.id, { projectId: project.id, accountId: api.id, modelId: gpt.id, inputPricePerMillion: 2, outputPricePerMillion: 8 });
+
+    const inputText = "a".repeat(4000);
+    const outputText = "b".repeat(2000);
+    const entry = estimateProjectUsage(dbPath, rudy.id, { projectId: project.id, setupId: setup.id, label: "Estimation API", inputText, outputText, usedAt: "2026-05-09" });
+    assert.equal(entry.inputTokens, estimateTokensFromText(inputText));
+    assert.equal(entry.outputTokens, estimateTokensFromText(outputText));
+    assert.equal(entry.costEur, 0.006);
+
+    assert.throws(() => estimateProjectUsage(dbPath, other.id, { projectId: project.id, setupId: setup.id, label: "intrusion", inputText: "x", outputText: "y" }), /Accès projet refusé/);
   } finally {
     cleanup();
   }
