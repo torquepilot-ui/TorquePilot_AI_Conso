@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { DB_PATH, USAGE_INBOX_DIR, assignAiAccountToProject, createAiAccount, createProject, createUser, deleteAiAccount, deleteProjectAiSetup, estimateProjectUsage, getUsageCollectorHealth, getUserById, importConnectorUsage, importUsageInbox, listDashboardData, seedDefaultProviders, updateAiAccount, updateProjectAiSetup, verifyUser } from "../lib/db";
+import { DB_PATH, USAGE_INBOX_DIR, USAGE_REPORTS_DIR, assignAiAccountToProject, createAiAccount, createProject, createUser, deleteAiAccount, deleteProjectAiSetup, deleteSavedUsageReport, estimateProjectUsage, getUsageCollectorHealth, getUserById, importConnectorUsage, importUsageInbox, listDashboardData, listSavedUsageReports, seedDefaultProviders, updateAiAccount, updateProjectAiSetup, verifyUser } from "../lib/db";
 import { makeSession, readSession } from "../lib/session";
 
 export const dynamic = "force-dynamic";
@@ -179,6 +179,17 @@ async function importInboxAction(formData: FormData) {
   } catch { redirect(`/?project=${projectId || ""}&error=Import dossier refusé`); }
   redirect(`/?project=${projectId}`);
 }
+async function deleteSavedReportAction(formData: FormData) {
+  "use server";
+  const userId = await currentUserId();
+  if (!userId) redirect("/");
+  const projectId = Number(formData.get("projectId") || 0);
+  try {
+    deleteSavedUsageReport(USAGE_REPORTS_DIR, String(formData.get("fileName") || ""));
+    revalidatePath("/");
+  } catch { redirect(`/?project=${projectId || ""}&error=Suppression rapport refusée`); }
+  redirect(`/?project=${projectId || ""}`);
+}
 function AuthScreen({ error }: { error?: string }) {
   return <main className="shell">
     <section className="hero"><div><p className="eyebrow">Dashboard local sécurisé</p><h1>TorquePilot AI Conso</h1><p className="subtitle">Crée ton compte local puis pilote projets, comptes IA, abonnements/API et estimations de coût.</p></div><div className="badge">MVP auth</div></section>
@@ -204,6 +215,8 @@ function modelPriceDetail(model: { inputPricePerMillion: number | null; outputPr
   return base;
 }
 function connectionLabel(value: string) { return value === "api" ? "API" : value === "local" ? "Local" : "Abonnement"; }
+function fileSize(bytes: number) { return bytes < 1024 ? `${bytes} o` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} Ko` : `${(bytes / 1024 / 1024).toFixed(1)} Mo`; }
+function shortDate(value: string) { return new Date(value).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" }); }
 const connectorOptions = [
   ["generic", "Auto générique JSON/JSONL"],
   ["openai", "OpenAI Responses/ChatCompletions"],
@@ -223,6 +236,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
   const selectedProjectId = params?.project ? Number(params.project) : undefined;
   const data = listDashboardData(DB_PATH, user.id, selectedProjectId);
   const collectorHealth = getUsageCollectorHealth(DB_PATH, user.id, USAGE_INBOX_DIR);
+  const savedReports = listSavedUsageReports(USAGE_REPORTS_DIR);
   const selectedProject = data.selectedProject;
   const apiSetups = data.projectAiSetups.filter((s) => s.connectionType === "api");
   const categoryCounts = data.models.reduce<Record<string, number>>((acc, model) => { acc[model.category] = (acc[model.category] || 0) + 1; return acc; }, {});
@@ -301,6 +315,10 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
 
     <section className="layout usageLayout">
       <article className="panel"><div className="sectionHeader"><div><p className="eyebrow">Rapport de consommation</p><h2>Historique automatique</h2></div>{selectedProject && <div className="reportActions"><a className="buttonLink" href={`/reports/usage?project=${selectedProject.id}&format=csv`}>Télécharger CSV</a><a className="buttonLink ghostLink" href={`/reports/usage?project=${selectedProject.id}&format=json`}>Sauvegarder JSON</a></div>}</div><p className="muted">Les boutons génèrent un rapport tokens depuis SQLite, le téléchargent et en conservent une copie serveur dans <code>data/usage-reports</code>.</p><div className="list">{data.usageEntries.length ? data.usageEntries.map((e) => <div className="row compact" key={e.id}><div><h3>{e.label}</h3><p>{e.providerName || "IA"} · {e.modelName || "Modèle"} · {e.usedAt}</p></div><span className="pill">{e.totalTokens.toLocaleString("fr-FR")} tok · {euro(e.costEur)}</span></div>) : <p className="muted">Aucun usage collecté pour ce projet.</p>}</div></article>
+      <aside className="panel"><div className="sectionHeader"><div><p className="eyebrow">Phase 4G</p><h2>Rapports sauvegardés</h2></div><span className="pill">{savedReports.length}</span></div><p className="muted">Retrouve les exports déjà générés, avec téléchargement direct et suppression côté serveur.</p><div className="list">{savedReports.length ? savedReports.map((report) => <div className="row compact reportRow" key={report.fileName}><div><h3>{report.format.toUpperCase()} · {fileSize(report.sizeBytes)}</h3><p>{shortDate(report.createdAt)}</p><small>{report.fileName}</small></div><div className="reportActions reportRowActions"><a className="buttonLink ghostLink" href={`/reports/saved?file=${encodeURIComponent(report.fileName)}`}>Télécharger</a><form action={deleteSavedReportAction}><input type="hidden" name="projectId" value={selectedProject?.id ?? ""} /><input type="hidden" name="fileName" value={report.fileName} /><button className="danger">Supprimer</button></form></div></div>) : <p className="muted">Aucun rapport sauvegardé. Génère d’abord un CSV ou JSON.</p>}</div></aside>
+    </section>
+
+    <section className="layout usageLayout">
       <aside className="panel"><div className="sectionHeader"><div><p className="eyebrow">Fallback temporaire</p><h2>Conversation isolée</h2></div></div>
         {selectedProject && data.projectAiSetups.length ? <form action={estimateUsageAction} className="usageForm">
           <input type="hidden" name="projectId" value={selectedProject.id} />

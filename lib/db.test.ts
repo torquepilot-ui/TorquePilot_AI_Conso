@@ -26,6 +26,9 @@ import {
   getUsageCollectorHealth,
   buildUsageReport,
   saveUsageReportFile,
+  listSavedUsageReports,
+  readSavedUsageReport,
+  deleteSavedUsageReport,
 } from "./db.ts";
 import { MODEL_CATALOG } from "./model-catalog.ts";
 
@@ -478,6 +481,45 @@ test("Phase 4F : rapport consommation exportable CSV et sauvegardé", () => {
     assert.equal(existsSync(saved.filePath), true);
     assert.equal(saved.fileName.endsWith(".csv"), true);
     assert.match(readFileSync(saved.filePath, "utf8"), /TorquePilot/);
+  } finally {
+    cleanup();
+    rmSync(reportDir, { recursive: true, force: true });
+  }
+});
+
+
+test("Phase 4G : rapports sauvegardés listables, téléchargeables et supprimables", () => {
+  const { dbPath, cleanup } = tempDb();
+  const reportDir = mkdtempSync(join(tmpdir(), "tp-saved-reports-"));
+  try {
+    initDb(dbPath);
+    seedDefaultProviders(dbPath);
+    const user = createUser(dbPath, "rudy@example.local", "secret-test");
+    const project = createProject(dbPath, user.id, "TorquePilot", "RAG mécanique");
+    const data = listDashboardData(dbPath, user.id);
+    const openai = data.providers.find((p) => p.name === "OpenAI")!;
+    const gpt = data.models.find((m) => m.name === "GPT-4.1")!;
+    const account = createAiAccount(dbPath, user.id, { providerId: openai.id, name: "OpenAI API", connectionType: "api" });
+    const setup = assignAiAccountToProject(dbPath, user.id, { projectId: project.id, accountId: account.id, modelId: gpt.id, connectionType: "api" });
+    estimateProjectUsage(dbPath, user.id, { projectId: project.id, setupId: setup.id, label: "session rapport", inputText: "prompt", outputText: "réponse" });
+
+    const csv = saveUsageReportFile(dbPath, user.id, { projectId: project.id, format: "csv", outputDir: reportDir });
+    const json = saveUsageReportFile(dbPath, user.id, { projectId: project.id, format: "json", outputDir: reportDir });
+    const reports = listSavedUsageReports(reportDir);
+
+    assert.equal(reports.length, 2);
+    assert.equal(reports.some((r) => r.fileName === csv.fileName && r.format === "csv" && r.sizeBytes > 0), true);
+    assert.equal(reports.some((r) => r.fileName === json.fileName && r.format === "json" && r.sizeBytes > 0), true);
+
+    const downloaded = readSavedUsageReport(reportDir, csv.fileName);
+    assert.equal(downloaded.fileName, csv.fileName);
+    assert.equal(downloaded.mimeType, "text/csv; charset=utf-8");
+    assert.match(downloaded.content, /rapport|date,projet|TorquePilot/i);
+
+    assert.throws(() => readSavedUsageReport(reportDir, "../secret.txt"), /Nom de rapport refusé/);
+    assert.equal(deleteSavedUsageReport(reportDir, csv.fileName), true);
+    assert.equal(existsSync(csv.filePath), false);
+    assert.equal(deleteSavedUsageReport(reportDir, "rapport-consommation-tokens-absent-2026-05-10.csv"), false);
   } finally {
     cleanup();
     rmSync(reportDir, { recursive: true, force: true });

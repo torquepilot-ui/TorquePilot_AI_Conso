@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync, unlinkSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { MODEL_CATALOG, type ModelCategory } from "./model-catalog.ts";
@@ -78,6 +78,8 @@ export type UsageCollectorHealth = { rootDir: string; pendingFiles: number; proc
 export type UsageReportFormat = "csv" | "json";
 export type UsageReport = { projectId: number; projectName: string; generatedAt: string; format: UsageReportFormat; mimeType: string; fileName: string; totals: { entries: number; inputTokens: number; outputTokens: number; totalTokens: number; costEur: number }; entries: UsageEntry[]; content: string };
 export type SavedUsageReport = UsageReport & { filePath: string };
+export type SavedUsageReportSummary = { fileName: string; format: UsageReportFormat; sizeBytes: number; createdAt: string; filePath: string };
+export type DownloadedUsageReport = { fileName: string; format: UsageReportFormat; mimeType: string; sizeBytes: number; content: string };
 
 const defaultDbPath = join(process.cwd(), "data", "torquepilot.sqlite");
 const defaultUsageInboxDir = join(process.cwd(), "data", "usage-inbox");
@@ -641,6 +643,39 @@ export function saveUsageReportFile(dbPath: string, userId: number, input: { pro
   const filePath = join(outputDir, report.fileName);
   writeFileSync(filePath, report.content, "utf8");
   return { ...report, filePath };
+}
+
+function safeSavedReportName(fileName: string) {
+  const clean = basename(String(fileName || ""));
+  if (!/^rapport-consommation-tokens-[a-z0-9_-]+-\d{4}-\d{2}-\d{2}\.(csv|json)$/.test(clean)) throw new Error("Nom de rapport refusé");
+  return clean;
+}
+export function listSavedUsageReports(outputDir = defaultUsageReportsDir): SavedUsageReportSummary[] {
+  mkdirSync(outputDir, { recursive: true });
+  return readdirSync(outputDir)
+    .filter((fileName) => {
+      try { safeSavedReportName(fileName); return true; } catch { return false; }
+    })
+    .map((fileName) => {
+      const filePath = join(outputDir, fileName);
+      const stats = statSync(filePath);
+      return { fileName, format: fileName.endsWith(".json") ? "json" as const : "csv" as const, sizeBytes: stats.size, createdAt: stats.mtime.toISOString(), filePath };
+    })
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+export function readSavedUsageReport(outputDir: string, fileName: string): DownloadedUsageReport {
+  const clean = safeSavedReportName(fileName);
+  const filePath = join(outputDir, clean);
+  const content = readFileSync(filePath, "utf8");
+  const format: UsageReportFormat = clean.endsWith(".json") ? "json" : "csv";
+  return { fileName: clean, format, mimeType: format === "json" ? "application/json; charset=utf-8" : "text/csv; charset=utf-8", sizeBytes: Buffer.byteLength(content), content };
+}
+export function deleteSavedUsageReport(outputDir: string, fileName: string) {
+  const clean = safeSavedReportName(fileName);
+  const filePath = join(outputDir, clean);
+  if (!existsSync(filePath)) return false;
+  unlinkSync(filePath);
+  return true;
 }
 
 export function listDashboardData(dbPath: string, userId: number, selectedProjectId?: number) {
