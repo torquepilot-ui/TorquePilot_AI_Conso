@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import {
   initDb,
   createUser,
@@ -18,6 +18,8 @@ import {
   estimateTokensFromText,
   importAutomaticUsage,
   importConnectorUsage,
+  importUsageInbox,
+  getUsageCollectorHealth,
 } from "./db.ts";
 import { MODEL_CATALOG } from "./model-catalog.ts";
 
@@ -302,5 +304,78 @@ test("Phase 4C : connecteurs Anthropic, Gemini et Ollama normalisent les logs lo
     assert.equal(listDashboardData(dbPath, user.id, project.id).usageEntries.length, 3);
   } finally {
     cleanup();
+  }
+});
+
+test("Phase 4D : collecteur local importe inbox puis déplace en processed", () => {
+  const { dbPath, cleanup } = tempDb();
+  const inboxRoot = mkdtempSync(join(tmpdir(), "tp-usage-inbox-"));
+  try {
+    initDb(dbPath);
+    seedDefaultProviders(dbPath);
+    const user = createUser(dbPath, "rudy@example.local", "secret-test");
+    const project = createProject(dbPath, user.id, "TorquePilot", "RAG mécanique");
+    const data = listDashboardData(dbPath, user.id);
+    const openai = data.providers.find((p) => p.name === "OpenAI")!;
+    const gpt = data.models.find((m) => m.name === "GPT-4.1")!;
+    const account = createAiAccount(dbPath, user.id, { providerId: openai.id, name: "OpenAI API", connectionType: "api" });
+    const setup = assignAiAccountToProject(dbPath, user.id, { projectId: project.id, accountId: account.id, modelId: gpt.id, connectionType: "api" });
+    const inbox = join(inboxRoot, "openai", "inbox");
+    mkdirSync(inbox, { recursive: true });
+    const filePath = join(inbox, "usage-openai.jsonl");
+    writeFileSync(filePath, JSON.stringify({ id: "resp_phase4d", created_at: 1778323200, usage: { input_tokens: 1000, output_tokens: 250 } }));
+
+    const result = importUsageInbox(dbPath, user.id, { rootDir: inboxRoot, projectId: project.id, setupId: setup.id });
+
+    assert.equal(result.processedFiles, 1);
+    assert.equal(result.failedFiles, 0);
+    assert.equal(result.importedCount, 1);
+    assert.equal(result.totalInputTokens, 1000);
+    assert.equal(result.totalOutputTokens, 250);
+    assert.equal(existsSync(filePath), false);
+    assert.equal(existsSync(join(inboxRoot, "openai", "processed", basename(filePath))), true);
+    const health = getUsageCollectorHealth(dbPath, user.id, inboxRoot);
+    assert.equal(health.pendingFiles, 0);
+    assert.equal(health.processedFiles, 1);
+    assert.equal(health.failedFiles, 0);
+    assert.equal(health.lastRun?.status, "success");
+  } finally {
+    cleanup();
+    rmSync(inboxRoot, { recursive: true, force: true });
+  }
+});
+
+test("Phase 4D : collecteur local journalise les échecs et déplace en failed", () => {
+  const { dbPath, cleanup } = tempDb();
+  const inboxRoot = mkdtempSync(join(tmpdir(), "tp-usage-inbox-"));
+  try {
+    initDb(dbPath);
+    seedDefaultProviders(dbPath);
+    const user = createUser(dbPath, "rudy@example.local", "secret-test");
+    const project = createProject(dbPath, user.id, "Local Lab", "Logs locaux");
+    const data = listDashboardData(dbPath, user.id);
+    const openai = data.providers.find((p) => p.name === "OpenAI")!;
+    const gpt = data.models.find((m) => m.name === "GPT-4.1")!;
+    const account = createAiAccount(dbPath, user.id, { providerId: openai.id, name: "Compte local", connectionType: "api" });
+    const setup = assignAiAccountToProject(dbPath, user.id, { projectId: project.id, accountId: account.id, modelId: gpt.id, connectionType: "api" });
+    const inbox = join(inboxRoot, "local", "inbox");
+    mkdirSync(inbox, { recursive: true });
+    const badFile = join(inbox, "empty.log");
+    writeFileSync(badFile, "");
+
+    const result = importUsageInbox(dbPath, user.id, { rootDir: inboxRoot, projectId: project.id, setupId: setup.id });
+
+    assert.equal(result.processedFiles, 0);
+    assert.equal(result.failedFiles, 1);
+    assert.equal(result.importedCount, 0);
+    assert.equal(existsSync(badFile), false);
+    assert.equal(existsSync(join(inboxRoot, "local", "failed", basename(badFile))), true);
+    const health = getUsageCollectorHealth(dbPath, user.id, inboxRoot);
+    assert.equal(health.failedFiles, 1);
+    assert.equal(health.lastRun?.status, "failed");
+    assert.match(health.recentRuns[0].errorMessage || "", /Aucun usage importable/);
+  } finally {
+    cleanup();
+    rmSync(inboxRoot, { recursive: true, force: true });
   }
 });

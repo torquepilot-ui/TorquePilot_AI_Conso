@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
-import { mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
+import { basename, dirname, extname, join } from "node:path";
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { MODEL_CATALOG, type ModelCategory } from "./model-catalog.ts";
 
@@ -71,8 +71,13 @@ export type AutomaticUsageImportInput = { projectId: number; setupId: number; so
 export type UsageConnector = "generic" | "openai" | "anthropic" | "google" | "ollama" | "local";
 export type ConnectorUsageImportInput = AutomaticUsageImportInput & { connector: UsageConnector };
 export type AutomaticUsageImportResult = { importedCount: number; totalInputTokens: number; totalOutputTokens: number; totalCostEur: number; entries: UsageEntry[] };
+export type UsageInboxImportInput = { rootDir: string; projectId: number; setupId: number; usedAt?: string };
+export type UsageImportRun = { id: number; userId: number; projectId: number; setupId: number; connector: UsageConnector; sourcePath: string; status: "success" | "failed"; importedCount: number; errorMessage: string | null; createdAt: string };
+export type UsageInboxImportResult = AutomaticUsageImportResult & { processedFiles: number; failedFiles: number; runs: UsageImportRun[] };
+export type UsageCollectorHealth = { rootDir: string; pendingFiles: number; processedFiles: number; failedFiles: number; lastRun: UsageImportRun | null; recentRuns: UsageImportRun[] };
 
 const defaultDbPath = join(process.cwd(), "data", "torquepilot.sqlite");
+const defaultUsageInboxDir = join(process.cwd(), "data", "usage-inbox");
 
 function open(dbPath = defaultDbPath) {
   mkdirSync(dirname(dbPath), { recursive: true });
@@ -153,6 +158,18 @@ export function initDb(dbPath = defaultDbPath) {
       cost_eur REAL NOT NULL DEFAULT 0,
       estimation_method TEXT,
       used_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS usage_import_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      project_id INTEGER NOT NULL REFERENCES projects(id),
+      setup_id INTEGER NOT NULL REFERENCES project_ai_setups(id),
+      connector TEXT NOT NULL,
+      source_path TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('success','failed')),
+      imported_count INTEGER NOT NULL DEFAULT 0,
+      error_message TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
   `);
   migrate(db);
@@ -433,6 +450,82 @@ export function importAutomaticUsage(dbPath: string, userId: number, input: Auto
   return importParsedUsage(dbPath, userId, input, parseAutomaticUsage(input.rawExport, sourceName, fallbackDate));
 }
 
+const inboxConnectors: UsageConnector[] = ["generic", "openai", "anthropic", "google", "ollama", "local"];
+const importableExtensions = new Set([".json", ".jsonl", ".log", ".txt"]);
+
+function ensureUsageInbox(rootDir: string) {
+  for (const connector of inboxConnectors) for (const folder of ["inbox", "processed", "failed"]) mkdirSync(join(rootDir, connector, folder), { recursive: true });
+}
+function safeMovePath(targetDir: string, filePath: string) {
+  mkdirSync(targetDir, { recursive: true });
+  const parsed = basename(filePath);
+  let target = join(targetDir, parsed);
+  if (existsSync(target)) target = join(targetDir, `${Date.now()}-${parsed}`);
+  renameSync(filePath, target);
+  return target;
+}
+function listInboxFiles(rootDir: string) {
+  ensureUsageInbox(rootDir);
+  const files: { connector: UsageConnector; path: string }[] = [];
+  for (const connector of inboxConnectors) {
+    const inbox = join(rootDir, connector, "inbox");
+    for (const name of readdirSync(inbox).sort()) {
+      const path = join(inbox, name);
+      if (statSync(path).isFile() && importableExtensions.has(extname(name).toLowerCase())) files.push({ connector, path });
+    }
+  }
+  return files;
+}
+function countFiles(rootDir: string, folder: "inbox" | "processed" | "failed") {
+  ensureUsageInbox(rootDir);
+  return inboxConnectors.reduce((sum, connector) => {
+    const dir = join(rootDir, connector, folder);
+    return sum + readdirSync(dir).filter((name) => statSync(join(dir, name)).isFile()).length;
+  }, 0);
+}
+function rowToRun(row: any): UsageImportRun {
+  return { id: Number(row.id), userId: Number(row.userId), projectId: Number(row.projectId), setupId: Number(row.setupId), connector: row.connector as UsageConnector, sourcePath: String(row.sourcePath), status: row.status === "success" ? "success" : "failed", importedCount: Number(row.importedCount ?? 0), errorMessage: row.errorMessage == null ? null : String(row.errorMessage), createdAt: String(row.createdAt) };
+}
+function recordImportRun(dbPath: string, userId: number, projectId: number, setupId: number, connector: UsageConnector, sourcePath: string, status: "success" | "failed", importedCount: number, errorMessage?: string) {
+  initDb(dbPath); const db = open(dbPath);
+  try {
+    const result = db.prepare(`INSERT INTO usage_import_runs(user_id, project_id, setup_id, connector, source_path, status, imported_count, error_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(userId, projectId, setupId, connector, sourcePath, status, importedCount, errorMessage || null);
+    return rowToRun(db.prepare(`SELECT id, user_id as userId, project_id as projectId, setup_id as setupId, connector, source_path as sourcePath, status, imported_count as importedCount, error_message as errorMessage, created_at as createdAt FROM usage_import_runs WHERE id = ?`).get(Number(result.lastInsertRowid)) as any);
+  } finally { db.close(); }
+}
+
+export function importUsageInbox(dbPath: string, userId: number, input: UsageInboxImportInput): UsageInboxImportResult {
+  const files = listInboxFiles(input.rootDir);
+  const entries: UsageEntry[] = [];
+  const runs: UsageImportRun[] = [];
+  let processedFiles = 0;
+  let failedFiles = 0;
+  for (const file of files) {
+    const sourcePath = file.path;
+    try {
+      const rawExport = readFileSync(sourcePath, "utf8");
+      const result = importConnectorUsage(dbPath, userId, { connector: file.connector, projectId: input.projectId, setupId: input.setupId, sourceName: basename(sourcePath), rawExport, usedAt: input.usedAt });
+      entries.push(...result.entries);
+      safeMovePath(join(input.rootDir, file.connector, "processed"), sourcePath);
+      processedFiles += 1;
+      runs.push(recordImportRun(dbPath, userId, input.projectId, input.setupId, file.connector, sourcePath, "success", result.importedCount));
+    } catch (error) {
+      safeMovePath(join(input.rootDir, file.connector, "failed"), sourcePath);
+      failedFiles += 1;
+      runs.push(recordImportRun(dbPath, userId, input.projectId, input.setupId, file.connector, sourcePath, "failed", 0, error instanceof Error ? error.message : "Import refusé"));
+    }
+  }
+  return { processedFiles, failedFiles, runs, importedCount: entries.length, totalInputTokens: entries.reduce((sum, entry) => sum + entry.inputTokens, 0), totalOutputTokens: entries.reduce((sum, entry) => sum + entry.outputTokens, 0), totalCostEur: toNonNegativeMoney(entries.reduce((sum, entry) => sum + entry.costEur, 0)), entries };
+}
+
+export function getUsageCollectorHealth(dbPath: string, userId: number, rootDir: string): UsageCollectorHealth {
+  initDb(dbPath); ensureUsageInbox(rootDir); const db = open(dbPath);
+  try {
+    const rows = db.prepare(`SELECT id, user_id as userId, project_id as projectId, setup_id as setupId, connector, source_path as sourcePath, status, imported_count as importedCount, error_message as errorMessage, created_at as createdAt FROM usage_import_runs WHERE user_id = ? ORDER BY id DESC LIMIT 8`).all(userId).map(rowToRun);
+    return { rootDir, pendingFiles: countFiles(rootDir, "inbox"), processedFiles: countFiles(rootDir, "processed"), failedFiles: countFiles(rootDir, "failed"), lastRun: rows[0] ?? null, recentRuns: rows };
+  } finally { db.close(); }
+}
+
 function usageById(db: DatabaseSync, entryId: number): UsageEntry {
   return rowToEntry(db.prepare(`SELECT e.id, e.project_id as projectId, p.name as projectName, e.model_id as modelId, m.name as modelName, pr.name as providerName, e.label, e.input_tokens as inputTokens, e.output_tokens as outputTokens, e.cost_eur as costEur, e.used_at as usedAt
     FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE e.id = ?`).get(entryId) as any);
@@ -456,3 +549,4 @@ export function listDashboardData(dbPath: string, userId: number, selectedProjec
 }
 
 export const DB_PATH = defaultDbPath;
+export const USAGE_INBOX_DIR = defaultUsageInboxDir;

@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { DB_PATH, assignAiAccountToProject, createAiAccount, createProject, createUser, estimateProjectUsage, getUserById, importConnectorUsage, listDashboardData, seedDefaultProviders, verifyUser } from "../lib/db";
+import { DB_PATH, USAGE_INBOX_DIR, assignAiAccountToProject, createAiAccount, createProject, createUser, estimateProjectUsage, getUsageCollectorHealth, getUserById, importConnectorUsage, importUsageInbox, listDashboardData, seedDefaultProviders, verifyUser } from "../lib/db";
 import { makeSession, readSession } from "../lib/session";
 
 export const dynamic = "force-dynamic";
@@ -115,6 +115,17 @@ async function importUsageAction(formData: FormData) {
   } catch { redirect(`/?project=${projectId || ""}&error=Import automatique refusé`); }
   redirect(`/?project=${projectId}`);
 }
+async function importInboxAction(formData: FormData) {
+  "use server";
+  const userId = await currentUserId();
+  if (!userId) redirect("/");
+  const projectId = Number(formData.get("projectId") || 0);
+  try {
+    importUsageInbox(DB_PATH, userId, { rootDir: USAGE_INBOX_DIR, projectId, setupId: Number(formData.get("setupId") || 0), usedAt: String(formData.get("usedAt") || "") });
+    revalidatePath("/");
+  } catch { redirect(`/?project=${projectId || ""}&error=Import dossier refusé`); }
+  redirect(`/?project=${projectId}`);
+}
 function AuthScreen({ error }: { error?: string }) {
   return <main className="shell">
     <section className="hero"><div><p className="eyebrow">Dashboard local sécurisé</p><h1>TorquePilot AI Conso</h1><p className="subtitle">Crée ton compte local puis pilote projets, comptes IA, abonnements/API et estimations de coût.</p></div><div className="badge">MVP auth</div></section>
@@ -158,6 +169,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
 
   const selectedProjectId = params?.project ? Number(params.project) : undefined;
   const data = listDashboardData(DB_PATH, user.id, selectedProjectId);
+  const collectorHealth = getUsageCollectorHealth(DB_PATH, user.id, USAGE_INBOX_DIR);
   const selectedProject = data.selectedProject;
   const apiSetups = data.projectAiSetups.filter((s) => s.connectionType === "api");
   const categoryCounts = data.models.reduce<Record<string, number>>((acc, model) => { acc[model.category] = (acc[model.category] || 0) + 1; return acc; }, {});
@@ -169,7 +181,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
   ];
 
   return <main className="shell">
-    <section className="hero"><div><p className="eyebrow">Connecté : {user.email}</p><h1>TorquePilot AI Conso</h1><p className="subtitle">Phase 4C : connecteurs fournisseurs/local réels depuis exports JSON/JSONL/logs OpenAI, Anthropic, Gemini, Ollama et local, avec normalisation tokens/coûts.</p></div><form action={logoutAction}><button className="ghost">Déconnexion</button></form></section>
+    <section className="hero"><div><p className="eyebrow">Connecté : {user.email}</p><h1>TorquePilot AI Conso</h1><p className="subtitle">Phase 4D : collecteur local surveillé sans clé API, inbox/processed/failed, historique des runs et santé collecte.</p></div><form action={logoutAction}><button className="ghost">Déconnexion</button></form></section>
     {params?.error && <p className="alert">{params.error}</p>}
     <section className="grid stats">{stats.map(([label, value, hint]) => <article className="card" key={label}><span>{label}</span><strong>{value}</strong><small>{hint}</small></article>)}</section>
 
@@ -226,6 +238,16 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
           <p className="muted">Sans clé API : on colle ou charge un export/log existant. Le connecteur normalise les champs fournisseur, calcule le coût API via le modèle affecté et force le coût à 0 € pour Ollama/local.</p>
         </form> : <p className="muted">Affecte d’abord un compte IA au projet.</p>}
       </article>
+      <aside className="panel"><div className="sectionHeader"><div><p className="eyebrow">Collecteur local Phase 4D</p><h2>Santé collecte</h2></div><span className="pill">{collectorHealth.pendingFiles ? "À traiter" : "OK"}</span></div>
+        <div className="grid stats"><article className="card"><span>Inbox</span><strong>{collectorHealth.pendingFiles}</strong><small>fichiers en attente</small></article><article className="card"><span>Processed</span><strong>{collectorHealth.processedFiles}</strong><small>archives conservées</small></article><article className="card"><span>Failed</span><strong>{collectorHealth.failedFiles}</strong><small>à corriger</small></article></div>
+        <p className="muted">Dossier surveillé : <code>{collectorHealth.rootDir}</code>. Déposer les fichiers dans <code>openai|anthropic|google|ollama|local|generic/inbox</code>. Rien n’est supprimé : succès vers processed, erreur vers failed.</p>
+        {selectedProject && data.projectAiSetups.length ? <form action={importInboxAction} className="inlineForm"><input type="hidden" name="projectId" value={selectedProject.id} /><select name="setupId" required>{data.projectAiSetups.map((s) => <option value={s.id} key={s.id}>{s.label}</option>)}</select><input name="usedAt" type="date" defaultValue={new Date().toISOString().slice(0, 10)} /><button>Importer dossier local</button></form> : <p className="muted">Affecte d’abord un compte IA au projet.</p>}
+        <div className="list">{collectorHealth.recentRuns.length ? collectorHealth.recentRuns.map((run) => <div className="row compact" key={run.id}><div><h3>{run.connector} · {run.status === "success" ? "OK" : "Erreur"}</h3><p>{run.sourcePath}</p>{run.errorMessage && <p className="alert">{run.errorMessage}</p>}</div><span className="pill">{run.importedCount} lignes</span></div>) : <p className="muted">Aucun run d’import dossier pour l’instant.</p>}</div>
+      </aside>
+    </section>
+
+    <section className="layout usageLayout">
+      <article className="panel"><h2>Historique automatique</h2><div className="list">{data.usageEntries.length ? data.usageEntries.map((e) => <div className="row compact" key={e.id}><div><h3>{e.label}</h3><p>{e.providerName || "IA"} · {e.modelName || "Modèle"} · {e.usedAt}</p></div><span className="pill">{e.totalTokens.toLocaleString("fr-FR")} tok · {euro(e.costEur)}</span></div>) : <p className="muted">Aucun usage collecté pour ce projet.</p>}</div></article>
       <aside className="panel"><div className="sectionHeader"><div><p className="eyebrow">Fallback temporaire</p><h2>Conversation isolée</h2></div></div>
         {selectedProject && data.projectAiSetups.length ? <form action={estimateUsageAction} className="usageForm">
           <input type="hidden" name="projectId" value={selectedProject.id} />
@@ -241,7 +263,6 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
     </section>
 
     <section className="layout usageLayout">
-      <article className="panel"><h2>Historique automatique</h2><div className="list">{data.usageEntries.length ? data.usageEntries.map((e) => <div className="row compact" key={e.id}><div><h3>{e.label}</h3><p>{e.providerName || "IA"} · {e.modelName || "Modèle"} · {e.usedAt}</p></div><span className="pill">{e.totalTokens.toLocaleString("fr-FR")} tok · {euro(e.costEur)}</span></div>) : <p className="muted">Aucun usage collecté pour ce projet.</p>}</div></article>
       <aside className="panel"><h2>Formats connecteurs</h2><ul className="tasks"><li><span>OpenAI</span><strong>Responses / ChatCompletions</strong><small>usage.input_tokens/output_tokens, prompt_tokens/completion_tokens, created_at epoch</small></li><li><span>Anthropic</span><strong>Claude Messages</strong><small>usage.input_tokens, usage.output_tokens, id msg_*</small></li><li><span>Google</span><strong>Gemini usageMetadata</strong><small>promptTokenCount, candidatesTokenCount, responseId/createTime</small></li><li><span>Ollama/local</span><strong>Logs locaux coût 0 €</strong><small>prompt_eval_count, eval_count, model, JSONL ligne par ligne</small></li></ul></aside>
     </section>
   </main>;
