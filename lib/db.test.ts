@@ -8,6 +8,7 @@ import {
   createUser,
   verifyUser,
   createProject,
+  deleteProject,
   userCanAccessProject,
   seedDefaultProviders,
   listDashboardData,
@@ -241,6 +242,51 @@ test("suppression compte IA conserve l'historique usage et retire les liens", ()
     assert.equal(deleteAiAccount(dbPath, user.id, account.id), true);
     const dashboard = listDashboardData(dbPath, user.id, project.id);
     assert.equal(dashboard.aiAccounts.length, 0);
+    assert.equal(dashboard.projectAiSetups.length, 0);
+    assert.equal(dashboard.usageEntries.length, 1);
+  } finally {
+    cleanup();
+  }
+});
+
+test("suppression projet supprime proprement données liées et reste isolée", () => {
+  const { dbPath, cleanup } = tempDb();
+  try {
+    initDb(dbPath);
+    seedDefaultProviders(dbPath);
+    const user = createUser(dbPath, "delete-project@example.local", "secret-test");
+    const other = createUser(dbPath, "delete-project-other@example.local", "secret-test");
+    const project = createProject(dbPath, user.id, "Projet à supprimer", "");
+    const otherProject = createProject(dbPath, other.id, "Projet autre", "");
+    const data = listDashboardData(dbPath, user.id, project.id);
+    const account = createAiAccount(dbPath, user.id, { providerId: data.providers[0].id, name: "Compte projet", connectionType: "api" });
+    const setup = assignAiAccountToProject(dbPath, user.id, { projectId: project.id, accountId: account.id, modelId: data.models[0].id });
+    estimateProjectUsage(dbPath, user.id, { projectId: project.id, setupId: setup.id, label: "Usage projet", inputText: "a", outputText: "b" });
+
+    assert.throws(() => deleteProject(dbPath, other.id, project.id), /Projet inconnu/);
+    assert.equal(deleteProject(dbPath, user.id, project.id), true);
+    assert.equal(userCanAccessProject(dbPath, user.id, project.id), false);
+    assert.deepEqual(listDashboardData(dbPath, user.id).projects.map((p) => p.id), []);
+    assert.deepEqual(listDashboardData(dbPath, other.id).projects.map((p) => p.id), [otherProject.id]);
+  } finally {
+    cleanup();
+  }
+});
+
+test("retrait IA affectée conserve l'historique usage et retire le lien", () => {
+  const { dbPath, cleanup } = tempDb();
+  try {
+    initDb(dbPath);
+    seedDefaultProviders(dbPath);
+    const user = createUser(dbPath, "delete-setup@example.local", "secret-test");
+    const project = createProject(dbPath, user.id, "Projet setup", "");
+    const data = listDashboardData(dbPath, user.id, project.id);
+    const account = createAiAccount(dbPath, user.id, { providerId: data.providers[0].id, name: "Compte setup", connectionType: "api" });
+    const setup = assignAiAccountToProject(dbPath, user.id, { projectId: project.id, accountId: account.id, modelId: data.models[0].id });
+    estimateProjectUsage(dbPath, user.id, { projectId: project.id, setupId: setup.id, label: "Historique setup", inputText: "question", outputText: "réponse" });
+
+    assert.equal(deleteProjectAiSetup(dbPath, user.id, setup.id), true);
+    const dashboard = listDashboardData(dbPath, user.id, project.id);
     assert.equal(dashboard.projectAiSetups.length, 0);
     assert.equal(dashboard.usageEntries.length, 1);
   } finally {

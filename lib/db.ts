@@ -233,6 +233,23 @@ export function createProject(dbPath: string, userId: number, name: string, desc
   initDb(dbPath); const db = open(dbPath); const result = db.prepare("INSERT INTO projects(name, description, owner_user_id) VALUES (?, ?, ?)").run(name.trim(), description.trim(), userId); const id = Number(result.lastInsertRowid);
   db.prepare("INSERT INTO project_members(project_id, user_id, role) VALUES (?, ?, 'owner')").run(id, userId); db.close(); return { id, name: name.trim(), description: description.trim(), ownerUserId: userId };
 }
+export function deleteProject(dbPath: string, userId: number, projectId: number) {
+  initDb(dbPath); const db = open(dbPath);
+  try {
+    const existing = db.prepare("SELECT 1 FROM projects WHERE id = ? AND owner_user_id = ?").get(projectId, userId);
+    if (!existing) throw new Error("Projet inconnu");
+    db.exec("BEGIN");
+    try {
+      db.prepare("DELETE FROM usage_import_runs WHERE project_id = ? AND user_id = ?").run(projectId, userId);
+      db.prepare("DELETE FROM ai_usage_entries WHERE project_id = ?").run(projectId);
+      db.prepare("DELETE FROM project_ai_setups WHERE project_id = ?").run(projectId);
+      db.prepare("DELETE FROM project_members WHERE project_id = ?").run(projectId);
+      const result = db.prepare("DELETE FROM projects WHERE id = ? AND owner_user_id = ?").run(projectId, userId);
+      db.exec("COMMIT");
+      return result.changes > 0;
+    } catch (error) { db.exec("ROLLBACK"); throw error; }
+  } finally { db.close(); }
+}
 export function userCanAccessProject(dbPath: string, userId: number, projectId: number) {
   initDb(dbPath); const db = open(dbPath); const row = db.prepare("SELECT 1 FROM project_members WHERE user_id = ? AND project_id = ?").get(userId, projectId); db.close(); return Boolean(row);
 }
@@ -358,9 +375,16 @@ export function updateProjectAiSetup(dbPath: string, userId: number, setupId: nu
 export function deleteProjectAiSetup(dbPath: string, userId: number, setupId: number) {
   initDb(dbPath); const db = open(dbPath);
   try {
-    const existing = db.prepare(`SELECT 1 FROM project_ai_setups s JOIN project_members pm ON pm.project_id = s.project_id AND pm.user_id = ? WHERE s.id = ?`).get(userId, setupId);
+    const existing = db.prepare(`SELECT s.project_id as projectId FROM project_ai_setups s JOIN project_members pm ON pm.project_id = s.project_id AND pm.user_id = ? WHERE s.id = ?`).get(userId, setupId) as any;
     if (!existing) throw new Error("Configuration IA inconnue");
-    return db.prepare("DELETE FROM project_ai_setups WHERE id = ?").run(setupId).changes > 0;
+    db.exec("BEGIN");
+    try {
+      db.prepare("UPDATE ai_usage_entries SET setup_id = NULL WHERE setup_id = ? AND project_id = ?").run(setupId, existing.projectId);
+      db.prepare("DELETE FROM usage_import_runs WHERE setup_id = ? AND project_id = ? AND user_id = ?").run(setupId, existing.projectId, userId);
+      const result = db.prepare("DELETE FROM project_ai_setups WHERE id = ?").run(setupId);
+      db.exec("COMMIT");
+      return result.changes > 0;
+    } catch (error) { db.exec("ROLLBACK"); throw error; }
   } finally { db.close(); }
 }
 

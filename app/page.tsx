@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { DB_PATH, USAGE_INBOX_DIR, USAGE_REPORTS_DIR, assignAiAccountToProject, createAiAccount, createProject, createUser, deleteAiAccount, deleteProjectAiSetup, deleteSavedUsageReport, estimateProjectUsage, getUsageCollectorHealth, getUserById, importConnectorUsage, importUsageInbox, listDashboardData, listSavedUsageReports, previewUsageInbox, seedDefaultProviders, updateAiAccount, updateProjectAiSetup, verifyUser } from "../lib/db";
+import { DB_PATH, USAGE_INBOX_DIR, USAGE_REPORTS_DIR, assignAiAccountToProject, createAiAccount, createProject, createUser, deleteAiAccount, deleteProject, deleteProjectAiSetup, deleteSavedUsageReport, estimateProjectUsage, getUsageCollectorHealth, getUserById, importConnectorUsage, importUsageInbox, listDashboardData, listSavedUsageReports, previewUsageInbox, seedDefaultProviders, updateAiAccount, updateProjectAiSetup, verifyUser } from "../lib/db";
 import { makeSession, readSession } from "../lib/session";
 
 export const dynamic = "force-dynamic";
@@ -42,6 +42,14 @@ async function createProjectAction(formData: FormData) {
   const name = String(formData.get("name") || "").trim();
   const description = String(formData.get("description") || "").trim();
   if (name) { const project = createProject(DB_PATH, userId, name, description); revalidatePath("/"); redirect(`/?project=${project.id}`); }
+  redirect("/");
+}
+async function deleteProjectAction(formData: FormData) {
+  "use server";
+  const userId = await currentUserId();
+  if (!userId) redirect("/");
+  try { deleteProject(DB_PATH, userId, Number(formData.get("projectId") || 0)); revalidatePath("/"); }
+  catch { redirect(`/?project=${formData.get("projectId") || ""}&error=Suppression projet refusée`); }
   redirect("/");
 }
 async function createAiAccountAction(formData: FormData) {
@@ -257,6 +265,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
     <section className="layout">
       <article className="panel"><div className="sectionHeader"><div><p className="eyebrow">Espace projet</p><h2>{selectedProject ? selectedProject.name : "Aucun projet"}</h2></div>{selectedProject && <span className="pill">API {euro(data.projectUsage.cost)} · Abos {euro(data.projectUsage.subscriptionMonthly)}/mois</span>}</div>
         <form action={createProjectAction} className="inlineForm"><input name="name" placeholder="Nom projet ex: TorquePilot RAG" required /><input name="description" placeholder="Description" /><button>Ajouter projet</button></form>
+        {selectedProject && <form action={deleteProjectAction} className="dangerForm"><input type="hidden" name="projectId" value={selectedProject.id} /><button className="danger">Supprimer ce projet</button><small>Supprime le projet sélectionné et ses données locales liées.</small></form>}
         <div className="projectTabs">{data.projects.length ? data.projects.map((p) => <a className={selectedProject?.id === p.id ? "tab active" : "tab"} href={`/?project=${p.id}`} key={p.id}><strong>{p.name}</strong><small>{p.description || "Sans description"}</small></a>) : <p className="muted">Dashboard vierge : ajoute ton premier projet.</p>}</div>
       </article>
       <aside className="panel"><h2>Catalogue IA automatique</h2><p className="muted">Catalogue local : {data.models.length} modèles · {Object.entries(categoryCounts).map(([cat, count]) => `${categoryLabel(cat)} ${count}`).join(" · ")}</p><ul className="tasks">{data.models.slice(0, 14).map((m) => <li key={m.id}><span>{m.providerName} · {categoryLabel(m.category)}</span><strong>{m.name}</strong><small>{modelPriceDetail(m)}</small></li>)}</ul></aside>
