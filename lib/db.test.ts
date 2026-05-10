@@ -218,6 +218,35 @@ test("modification et suppression des comptes IA et affectations projet", () => 
   }
 });
 
+test("suppression compte IA conserve l'historique usage et retire les liens", () => {
+  const { dbPath, cleanup } = tempDb();
+  try {
+    initDb(dbPath);
+    seedDefaultProviders(dbPath);
+    const user = createUser(dbPath, "delete-usage@example.local", "secret-test");
+    const project = createProject(dbPath, user.id, "Projet usage", "");
+    const data = listDashboardData(dbPath, user.id, project.id);
+    const account = createAiAccount(dbPath, user.id, { providerId: data.providers[0].id, name: "Compte à supprimer", connectionType: "api" });
+    const setup = assignAiAccountToProject(dbPath, user.id, { projectId: project.id, accountId: account.id, modelId: data.models[0].id });
+
+    estimateProjectUsage(dbPath, user.id, {
+      projectId: project.id,
+      setupId: setup.id,
+      label: "Historique à garder",
+      inputText: "question test",
+      outputText: "réponse test",
+    });
+
+    assert.equal(deleteAiAccount(dbPath, user.id, account.id), true);
+    const dashboard = listDashboardData(dbPath, user.id, project.id);
+    assert.equal(dashboard.aiAccounts.length, 0);
+    assert.equal(dashboard.projectAiSetups.length, 0);
+    assert.equal(dashboard.usageEntries.length, 1);
+  } finally {
+    cleanup();
+  }
+});
+
 test("interface publique sans mention KIRO", () => {
   const page = readFileSync(join(process.cwd(), "app", "page.tsx"), "utf8");
   assert.equal(/KIRO/i.test(page), false);

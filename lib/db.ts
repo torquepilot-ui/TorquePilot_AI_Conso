@@ -294,6 +294,12 @@ export function deleteAiAccount(dbPath: string, userId: number, accountId: numbe
     if (!existing) throw new Error("Compte IA inconnu");
     db.exec("BEGIN");
     try {
+      db.prepare(`UPDATE ai_usage_entries SET account_id = NULL, setup_id = NULL
+        WHERE account_id = ? OR setup_id IN (SELECT s.id FROM project_ai_setups s JOIN ai_accounts a ON a.id = s.account_id WHERE s.account_id = ? AND a.user_id = ?)`)
+        .run(accountId, accountId, userId);
+      db.prepare(`DELETE FROM usage_import_runs
+        WHERE setup_id IN (SELECT s.id FROM project_ai_setups s JOIN ai_accounts a ON a.id = s.account_id WHERE s.account_id = ? AND a.user_id = ?)`)
+        .run(accountId, userId);
       db.prepare("DELETE FROM project_ai_setups WHERE account_id = ? AND account_id IN (SELECT id FROM ai_accounts WHERE user_id = ?)").run(accountId, userId);
       const result = db.prepare("DELETE FROM ai_accounts WHERE id = ? AND user_id = ?").run(accountId, userId);
       db.exec("COMMIT");
