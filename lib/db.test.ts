@@ -26,6 +26,7 @@ import {
   getUsageCollectorHealth,
   buildUsageReport,
   saveUsageReportFile,
+  buildUsageChartData,
   listSavedUsageReports,
   readSavedUsageReport,
   deleteSavedUsageReport,
@@ -523,5 +524,44 @@ test("Phase 4G : rapports sauvegardés listables, téléchargeables et supprimab
   } finally {
     cleanup();
     rmSync(reportDir, { recursive: true, force: true });
+  }
+});
+
+test("Phase 4H : agrégats graphiques isolés par projet et utilisateur", () => {
+  const { dbPath, cleanup } = tempDb();
+  try {
+    initDb(dbPath);
+    seedDefaultProviders(dbPath);
+    const user = createUser(dbPath, "rudy@example.local", "secret-test");
+    const other = createUser(dbPath, "other@example.local", "secret-test");
+    const project = createProject(dbPath, user.id, "TorquePilot", "RAG mécanique");
+    const otherProject = createProject(dbPath, user.id, "T.E.D.", "Pilote Tahiti");
+    const data = listDashboardData(dbPath, user.id);
+    const openai = data.providers.find((p) => p.name === "OpenAI")!;
+    const gpt = data.models.find((m) => m.name === "GPT-4.1")!;
+    const account = createAiAccount(dbPath, user.id, { providerId: openai.id, name: "OpenAI API", connectionType: "api" });
+    const setup = assignAiAccountToProject(dbPath, user.id, { projectId: project.id, accountId: account.id, modelId: gpt.id, connectionType: "api" });
+    const otherSetup = assignAiAccountToProject(dbPath, user.id, { projectId: otherProject.id, accountId: account.id, modelId: gpt.id, connectionType: "api" });
+
+    importConnectorUsage(dbPath, user.id, { connector: "openai", projectId: project.id, setupId: setup.id, sourceName: "jour 1", usedAt: "2026-05-08", rawExport: JSON.stringify({ id: "a", usage: { input_tokens: 1000, output_tokens: 500 } }) });
+    importConnectorUsage(dbPath, user.id, { connector: "openai", projectId: project.id, setupId: setup.id, sourceName: "jour 2", usedAt: "2026-05-09", rawExport: JSON.stringify({ id: "b", usage: { input_tokens: 2000, output_tokens: 1000 } }) });
+    importConnectorUsage(dbPath, user.id, { connector: "openai", projectId: otherProject.id, setupId: otherSetup.id, sourceName: "hors scope", usedAt: "2026-05-09", rawExport: JSON.stringify({ id: "c", usage: { input_tokens: 9000, output_tokens: 9000 } }) });
+
+    const charts = buildUsageChartData(dbPath, user.id, project.id);
+
+    assert.equal(charts.projectId, project.id);
+    assert.equal(charts.totals.entries, 2);
+    assert.equal(charts.totals.inputTokens, 3000);
+    assert.equal(charts.totals.outputTokens, 1500);
+    assert.equal(charts.totals.totalTokens, 4500);
+    assert.equal(charts.daily.length, 2);
+    assert.deepEqual(charts.daily.map((d) => [d.date, d.totalTokens]), [["2026-05-08", 1500], ["2026-05-09", 3000]]);
+    assert.equal(charts.daily[1].maxRatio, 1);
+    assert.equal(charts.topProviders[0].name, "OpenAI");
+    assert.equal(charts.topProviders[0].totalTokens, 4500);
+    assert.equal(charts.topModels[0].name, "GPT-4.1");
+    assert.throws(() => buildUsageChartData(dbPath, other.id, project.id), /Accès projet refusé/);
+  } finally {
+    cleanup();
   }
 });

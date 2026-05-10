@@ -217,6 +217,7 @@ function modelPriceDetail(model: { inputPricePerMillion: number | null; outputPr
 function connectionLabel(value: string) { return value === "api" ? "API" : value === "local" ? "Local" : "Abonnement"; }
 function fileSize(bytes: number) { return bytes < 1024 ? `${bytes} o` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} Ko` : `${(bytes / 1024 / 1024).toFixed(1)} Mo`; }
 function shortDate(value: string) { return new Date(value).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" }); }
+function percent(value: number) { return `${Math.max(3, Math.round(value * 100))}%`; }
 const connectorOptions = [
   ["generic", "Auto générique JSON/JSONL"],
   ["openai", "OpenAI Responses/ChatCompletions"],
@@ -310,6 +311,18 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
         <p className="muted">Dossier surveillé : <code>{collectorHealth.rootDir}</code>. Déposer les fichiers dans <code>openai|anthropic|google|ollama|local|generic/inbox</code>. Rien n’est supprimé : succès vers processed, erreur vers failed.</p>
         {selectedProject && data.projectAiSetups.length ? <form action={importInboxAction} className="inlineForm"><input type="hidden" name="projectId" value={selectedProject.id} /><select name="setupId" required>{data.projectAiSetups.map((s) => <option value={s.id} key={s.id}>{s.label}</option>)}</select><input name="usedAt" type="date" defaultValue={new Date().toISOString().slice(0, 10)} /><button>Importer dossier local</button></form> : <p className="muted">Affecte d’abord un compte IA au projet.</p>}
         <div className="list">{collectorHealth.recentRuns.length ? collectorHealth.recentRuns.map((run) => <div className="row compact" key={run.id}><div><h3>{run.connector} · {run.status === "success" ? "OK" : "Erreur"}</h3><p>{run.sourcePath}</p>{run.errorMessage && <p className="alert">{run.errorMessage}</p>}</div><span className="pill">{run.importedCount} lignes</span></div>) : <p className="muted">Aucun run d’import dossier pour l’instant.</p>}</div>
+      </aside>
+    </section>
+
+    <section className="layout usageLayout">
+      <article className="panel"><div className="sectionHeader"><div><p className="eyebrow">Phase 4H</p><h2>Tendance consommation</h2></div>{data.usageCharts && <span className="pill">{data.usageCharts.totals.totalTokens.toLocaleString("fr-FR")} tok</span>}</div>
+        {data.usageCharts && data.usageCharts.totals.entries ? <div className="chartStack">
+          <div className="chartSummary"><div><span>Entrées</span><strong>{data.usageCharts.totals.entries}</strong></div><div><span>Input</span><strong>{data.usageCharts.totals.inputTokens.toLocaleString("fr-FR")}</strong></div><div><span>Output</span><strong>{data.usageCharts.totals.outputTokens.toLocaleString("fr-FR")}</strong></div><div><span>Coût</span><strong>{euro(data.usageCharts.totals.costEur)}</strong></div></div>
+          <div className="barChart">{data.usageCharts.daily.map((day) => <div className="barRow" key={day.date}><span>{day.date}</span><div className="barTrack"><i style={{ width: percent(day.maxRatio) }}></i></div><strong>{day.totalTokens.toLocaleString("fr-FR")} tok</strong></div>)}</div>
+        </div> : <p className="muted">Aucune donnée locale à afficher pour ce projet.</p>}
+      </article>
+      <aside className="panel"><div className="sectionHeader"><div><p className="eyebrow">Répartition</p><h2>Top IA/modèles</h2></div></div>
+        {data.usageCharts && data.usageCharts.totals.entries ? <div className="chartStack"><div>{data.usageCharts.topProviders.map((item) => <div className="miniBar" key={item.name}><div><strong>{item.name}</strong><span>{item.totalTokens.toLocaleString("fr-FR")} tok · {euro(item.costEur)}</span></div><div className="barTrack"><i style={{ width: percent(item.maxRatio) }}></i></div></div>)}</div><div>{data.usageCharts.topModels.map((item) => <div className="miniBar" key={item.name}><div><strong>{item.name}</strong><span>{item.totalTokens.toLocaleString("fr-FR")} tok</span></div><div className="barTrack"><i style={{ width: percent(item.maxRatio) }}></i></div></div>)}</div></div> : <p className="muted">Les agrégats se remplissent après import/estimation locale.</p>}
       </aside>
     </section>
 
