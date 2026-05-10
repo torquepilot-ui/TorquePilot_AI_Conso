@@ -11,3 +11,4 @@ build
 data/*.sqlite
 data/*.sqlite-*
 data/usage-inbox/
+data/usage-reports/

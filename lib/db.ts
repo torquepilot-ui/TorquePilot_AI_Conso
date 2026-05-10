@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { MODEL_CATALOG, type ModelCategory } from "./model-catalog.ts";
@@ -75,9 +75,13 @@ export type UsageInboxImportInput = { rootDir: string; projectId: number; setupI
 export type UsageImportRun = { id: number; userId: number; projectId: number; setupId: number; connector: UsageConnector; sourcePath: string; status: "success" | "failed"; importedCount: number; errorMessage: string | null; createdAt: string };
 export type UsageInboxImportResult = AutomaticUsageImportResult & { processedFiles: number; failedFiles: number; runs: UsageImportRun[] };
 export type UsageCollectorHealth = { rootDir: string; pendingFiles: number; processedFiles: number; failedFiles: number; lastRun: UsageImportRun | null; recentRuns: UsageImportRun[] };
+export type UsageReportFormat = "csv" | "json";
+export type UsageReport = { projectId: number; projectName: string; generatedAt: string; format: UsageReportFormat; mimeType: string; fileName: string; totals: { entries: number; inputTokens: number; outputTokens: number; totalTokens: number; costEur: number }; entries: UsageEntry[]; content: string };
+export type SavedUsageReport = UsageReport & { filePath: string };
 
 const defaultDbPath = join(process.cwd(), "data", "torquepilot.sqlite");
 const defaultUsageInboxDir = join(process.cwd(), "data", "usage-inbox");
+const defaultUsageReportsDir = join(process.cwd(), "data", "usage-reports");
 
 function open(dbPath = defaultDbPath) {
   mkdirSync(dirname(dbPath), { recursive: true });
@@ -591,6 +595,54 @@ function usageById(db: DatabaseSync, entryId: number): UsageEntry {
     FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE e.id = ?`).get(entryId) as any);
 }
 
+function csvEscape(value: unknown) {
+  const raw = String(value ?? "");
+  return /[",\n\r]/.test(raw) ? `"${raw.replaceAll('"', '""')}"` : raw;
+}
+function safeReportSlug(value: string) {
+  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase() || "projet";
+}
+function usageReportEntries(db: DatabaseSync, userId: number, projectId: number) {
+  const project = db.prepare(`SELECT p.id, p.name FROM projects p JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ? WHERE p.id = ?`).get(userId, projectId) as any;
+  if (!project) throw new Error("Accès projet refusé");
+  const entries = db.prepare(`SELECT e.id, e.project_id as projectId, p.name as projectName, e.model_id as modelId, m.name as modelName, pr.name as providerName, e.label, e.input_tokens as inputTokens, e.output_tokens as outputTokens, e.cost_eur as costEur, e.used_at as usedAt
+    FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE e.project_id = ? ORDER BY e.used_at ASC, e.id ASC`).all(projectId).map(rowToEntry);
+  return { projectName: String(project.name), entries };
+}
+export function buildUsageReport(dbPath: string, userId: number, projectId: number, format: UsageReportFormat = "csv"): UsageReport {
+  initDb(dbPath); const db = open(dbPath);
+  try {
+    const { projectName, entries } = usageReportEntries(db, userId, projectId);
+    const generatedAt = new Date().toISOString();
+    const totals = {
+      entries: entries.length,
+      inputTokens: entries.reduce((sum, entry) => sum + entry.inputTokens, 0),
+      outputTokens: entries.reduce((sum, entry) => sum + entry.outputTokens, 0),
+      totalTokens: entries.reduce((sum, entry) => sum + entry.totalTokens, 0),
+      costEur: toNonNegativeMoney(entries.reduce((sum, entry) => sum + entry.costEur, 0)),
+    };
+    const normalizedFormat: UsageReportFormat = format === "json" ? "json" : "csv";
+    const fileName = `rapport-consommation-tokens-${safeReportSlug(projectName)}-${generatedAt.slice(0, 10)}.${normalizedFormat}`;
+    const content = normalizedFormat === "json"
+      ? JSON.stringify({ projectId, projectName, generatedAt, totals, entries }, null, 2)
+      : [
+          "date,projet,fournisseur,modele,libelle,input_tokens,output_tokens,total_tokens,cost_eur",
+          ...entries.map((entry) => [entry.usedAt, entry.projectName, entry.providerName || "", entry.modelName || "", entry.label, entry.inputTokens, entry.outputTokens, entry.totalTokens, entry.costEur.toFixed(6)].map(csvEscape).join(",")),
+          "",
+          `TOTAL,${csvEscape(projectName)},,,,${totals.inputTokens},${totals.outputTokens},${totals.totalTokens},${totals.costEur.toFixed(6)}`,
+        ].join("\n");
+    return { projectId, projectName, generatedAt, format: normalizedFormat, mimeType: normalizedFormat === "json" ? "application/json; charset=utf-8" : "text/csv; charset=utf-8", fileName, totals, entries, content };
+  } finally { db.close(); }
+}
+export function saveUsageReportFile(dbPath: string, userId: number, input: { projectId: number; format?: UsageReportFormat; outputDir?: string }): SavedUsageReport {
+  const report = buildUsageReport(dbPath, userId, input.projectId, input.format ?? "csv");
+  const outputDir = input.outputDir || defaultUsageReportsDir;
+  mkdirSync(outputDir, { recursive: true });
+  const filePath = join(outputDir, report.fileName);
+  writeFileSync(filePath, report.content, "utf8");
+  return { ...report, filePath };
+}
+
 export function listDashboardData(dbPath: string, userId: number, selectedProjectId?: number) {
   initDb(dbPath); seedDefaultProviders(dbPath); const db = open(dbPath);
   const projects = db.prepare(`SELECT p.id, p.name, p.description, p.owner_user_id as ownerUserId FROM projects p JOIN project_members pm ON pm.project_id = p.id WHERE pm.user_id = ? ORDER BY p.id DESC`).all(userId) as Project[];
@@ -610,3 +662,4 @@ export function listDashboardData(dbPath: string, userId: number, selectedProjec
 
 export const DB_PATH = defaultDbPath;
 export const USAGE_INBOX_DIR = defaultUsageInboxDir;
+export const USAGE_REPORTS_DIR = defaultUsageReportsDir;

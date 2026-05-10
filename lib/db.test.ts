@@ -24,6 +24,8 @@ import {
   importConnectorUsage,
   importUsageInbox,
   getUsageCollectorHealth,
+  buildUsageReport,
+  saveUsageReportFile,
 } from "./db.ts";
 import { MODEL_CATALOG } from "./model-catalog.ts";
 
@@ -436,5 +438,48 @@ test("Phase 4D : collecteur local journalise les échecs et déplace en failed",
   } finally {
     cleanup();
     rmSync(inboxRoot, { recursive: true, force: true });
+  }
+});
+
+test("Phase 4F : rapport consommation exportable CSV et sauvegardé", () => {
+  const { dbPath, cleanup } = tempDb();
+  const reportDir = mkdtempSync(join(tmpdir(), "tp-usage-reports-"));
+  try {
+    initDb(dbPath);
+    seedDefaultProviders(dbPath);
+    const user = createUser(dbPath, "rudy@example.local", "secret-test");
+    const other = createUser(dbPath, "other@example.local", "secret-test");
+    const project = createProject(dbPath, user.id, "TorquePilot", "RAG mécanique");
+    const data = listDashboardData(dbPath, user.id);
+    const openai = data.providers.find((p) => p.name === "OpenAI")!;
+    const gpt = data.models.find((m) => m.name === "GPT-4.1")!;
+    const account = createAiAccount(dbPath, user.id, { providerId: openai.id, name: "OpenAI API", connectionType: "api" });
+    const setup = assignAiAccountToProject(dbPath, user.id, { projectId: project.id, accountId: account.id, modelId: gpt.id, connectionType: "api" });
+    importConnectorUsage(dbPath, user.id, {
+      connector: "openai",
+      projectId: project.id,
+      setupId: setup.id,
+      sourceName: "OpenAI export",
+      rawExport: JSON.stringify({ id: "resp_report", created_at: 1778323200, usage: { input_tokens: 1200, output_tokens: 300 } }),
+    });
+
+    const report = buildUsageReport(dbPath, user.id, project.id, "csv");
+
+    assert.equal(report.projectName, "TorquePilot");
+    assert.equal(report.totals.totalTokens, 1500);
+    assert.equal(report.totals.inputTokens, 1200);
+    assert.equal(report.totals.outputTokens, 300);
+    assert.match(report.content, /date,projet,fournisseur,modele,libelle,input_tokens,output_tokens,total_tokens,cost_eur/);
+    assert.match(report.content, /resp_report/);
+    assert.equal(report.mimeType, "text/csv; charset=utf-8");
+    assert.throws(() => buildUsageReport(dbPath, other.id, project.id, "csv"), /Accès projet refusé/);
+
+    const saved = saveUsageReportFile(dbPath, user.id, { projectId: project.id, format: "csv", outputDir: reportDir });
+    assert.equal(existsSync(saved.filePath), true);
+    assert.equal(saved.fileName.endsWith(".csv"), true);
+    assert.match(readFileSync(saved.filePath, "utf8"), /TorquePilot/);
+  } finally {
+    cleanup();
+    rmSync(reportDir, { recursive: true, force: true });
   }
 });
