@@ -263,6 +263,36 @@ export function createAiAccount(dbPath: string, userId: number, input: AiAccount
   } finally { db.close(); }
 }
 
+export function updateAiAccount(dbPath: string, userId: number, accountId: number, input: Partial<AiAccountInput>): AiAccount {
+  initDb(dbPath); seedDefaultProviders(dbPath); const db = open(dbPath);
+  try {
+    const existing = db.prepare("SELECT * FROM ai_accounts WHERE id = ? AND user_id = ?").get(accountId, userId) as any;
+    if (!existing) throw new Error("Compte IA inconnu");
+    const name = String(input.name ?? existing.name).trim(); if (!name) throw new Error("Nom du compte IA obligatoire");
+    const connectionType = normalizeConnectionType(input.connectionType ?? existing.connection_type);
+    const providerId = input.providerId === undefined ? existing.provider_id : (input.providerId ? Number(input.providerId) : null);
+    if (providerId && !db.prepare("SELECT 1 FROM ai_providers WHERE id = ?").get(providerId)) throw new Error("Fournisseur IA inconnu");
+    db.prepare(`UPDATE ai_accounts SET provider_id = ?, name = ?, connection_type = ?, subscription_name = ?, monthly_cost_eur = ?, notes = ? WHERE id = ? AND user_id = ?`)
+      .run(providerId, name, connectionType, input.subscriptionName?.trim() || null, toNonNegativeMoney(input.monthlyCostEur ?? existing.monthly_cost_eur ?? 0), input.notes?.trim() || null, accountId, userId);
+    return rowToAccount(db.prepare(`SELECT a.id, a.user_id as userId, a.provider_id as providerId, p.name as providerName, a.name, a.connection_type as connectionType, a.subscription_name as subscriptionName, a.monthly_cost_eur as monthlyCostEur, a.notes FROM ai_accounts a LEFT JOIN ai_providers p ON p.id = a.provider_id WHERE a.id = ? AND a.user_id = ?`).get(accountId, userId) as any);
+  } finally { db.close(); }
+}
+
+export function deleteAiAccount(dbPath: string, userId: number, accountId: number) {
+  initDb(dbPath); const db = open(dbPath);
+  try {
+    const existing = db.prepare("SELECT 1 FROM ai_accounts WHERE id = ? AND user_id = ?").get(accountId, userId);
+    if (!existing) throw new Error("Compte IA inconnu");
+    db.exec("BEGIN");
+    try {
+      db.prepare("DELETE FROM project_ai_setups WHERE account_id = ? AND account_id IN (SELECT id FROM ai_accounts WHERE user_id = ?)").run(accountId, userId);
+      const result = db.prepare("DELETE FROM ai_accounts WHERE id = ? AND user_id = ?").run(accountId, userId);
+      db.exec("COMMIT");
+      return result.changes > 0;
+    } catch (error) { db.exec("ROLLBACK"); throw error; }
+  } finally { db.close(); }
+}
+
 export function assignAiAccountToProject(dbPath: string, userId: number, input: ProjectAiSetupInput): ProjectAiSetup {
   initDb(dbPath); seedDefaultProviders(dbPath); const db = open(dbPath);
   try {
@@ -285,6 +315,36 @@ export function assignAiAccountToProject(dbPath: string, userId: number, input: 
 function getSetupById(db: DatabaseSync, setupId: number): ProjectAiSetup {
   return rowToSetup(db.prepare(`SELECT s.id, s.project_id as projectId, p.name as projectName, s.account_id as accountId, a.name as accountName, pr.name as providerName, s.model_id as modelId, m.name as modelName, s.connection_type as connectionType, a.subscription_name as subscriptionName, a.monthly_cost_eur as monthlyCostEur, s.input_price_per_million as inputPricePerMillion, s.output_price_per_million as outputPricePerMillion, s.label
     FROM project_ai_setups s JOIN projects p ON p.id = s.project_id JOIN ai_accounts a ON a.id = s.account_id LEFT JOIN ai_providers pr ON pr.id = a.provider_id LEFT JOIN ai_models m ON m.id = s.model_id WHERE s.id = ?`).get(setupId) as any);
+}
+
+export function updateProjectAiSetup(dbPath: string, userId: number, setupId: number, input: ProjectAiSetupInput): ProjectAiSetup {
+  initDb(dbPath); seedDefaultProviders(dbPath); const db = open(dbPath);
+  try {
+    const current = db.prepare(`SELECT s.* FROM project_ai_setups s JOIN projects p ON p.id = s.project_id JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ? WHERE s.id = ?`).get(userId, setupId) as any;
+    if (!current) throw new Error("Configuration IA inconnue");
+    if (!db.prepare("SELECT 1 FROM project_members WHERE user_id = ? AND project_id = ?").get(userId, input.projectId)) throw new Error("Accès projet refusé");
+    const account = db.prepare("SELECT * FROM ai_accounts WHERE id = ? AND user_id = ?").get(input.accountId, userId) as any;
+    if (!account) throw new Error("Compte IA inconnu");
+    const modelId = input.modelId ? Number(input.modelId) : null;
+    const model = modelId ? db.prepare("SELECT input_price_per_million, output_price_per_million FROM ai_models WHERE id = ?").get(modelId) as any : null;
+    if (modelId && !model) throw new Error("Modèle IA inconnu");
+    const connectionType = input.connectionType ? normalizeConnectionType(input.connectionType) : normalizeConnectionType(account.connection_type);
+    const inputPrice = toNullableMoney(input.inputPricePerMillion ?? model?.input_price_per_million);
+    const outputPrice = toNullableMoney(input.outputPricePerMillion ?? model?.output_price_per_million);
+    const label = input.label?.trim() || `${account.name} — ${connectionType === "api" ? "API" : connectionType === "local" ? "Local" : "Abonnement"}`;
+    db.prepare(`UPDATE project_ai_setups SET project_id = ?, account_id = ?, model_id = ?, connection_type = ?, label = ?, input_price_per_million = ?, output_price_per_million = ? WHERE id = ?`)
+      .run(input.projectId, input.accountId, modelId, connectionType, label, inputPrice, outputPrice, setupId);
+    return getSetupById(db, setupId);
+  } finally { db.close(); }
+}
+
+export function deleteProjectAiSetup(dbPath: string, userId: number, setupId: number) {
+  initDb(dbPath); const db = open(dbPath);
+  try {
+    const existing = db.prepare(`SELECT 1 FROM project_ai_setups s JOIN project_members pm ON pm.project_id = s.project_id AND pm.user_id = ? WHERE s.id = ?`).get(userId, setupId);
+    if (!existing) throw new Error("Configuration IA inconnue");
+    return db.prepare("DELETE FROM project_ai_setups WHERE id = ?").run(setupId).changes > 0;
+  } finally { db.close(); }
 }
 
 export function recordUsageEntry(dbPath: string, userId: number, input: UsageInput): UsageEntry {

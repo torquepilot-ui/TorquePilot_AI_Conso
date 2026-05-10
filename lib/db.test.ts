@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import {
@@ -13,7 +13,11 @@ import {
   listDashboardData,
   recordUsageEntry,
   createAiAccount,
+  updateAiAccount,
+  deleteAiAccount,
   assignAiAccountToProject,
+  updateProjectAiSetup,
+  deleteProjectAiSetup,
   estimateProjectUsage,
   estimateTokensFromText,
   importAutomaticUsage,
@@ -47,7 +51,7 @@ test("auth sécurisée + isolation projet", () => {
   }
 });
 
-test("catalogue KIRO enrichi : catégories et tarifs API automatiques", () => {
+test("catalogue local enrichi : catégories et tarifs API automatiques", () => {
   const categories = new Set(MODEL_CATALOG.map((m) => m.category));
   assert.ok(categories.has("text"));
   assert.ok(categories.has("image"));
@@ -58,7 +62,7 @@ test("catalogue KIRO enrichi : catégories et tarifs API automatiques", () => {
   assert.ok(MODEL_CATALOG.some((m) => m.category === "image" && m.imagePrice !== null));
 });
 
-test("providers/modèles par défaut + données dashboard enrichies KIRO", () => {
+test("providers/modèles par défaut + données dashboard enrichies catalogue local", () => {
   const { dbPath, cleanup } = tempDb();
   try {
     initDb(dbPath);
@@ -156,6 +160,61 @@ test("comptes IA abonnement/API affectés au projet", () => {
   } finally {
     cleanup();
   }
+});
+
+test("modification et suppression des comptes IA et affectations projet", () => {
+  const { dbPath, cleanup } = tempDb();
+  try {
+    initDb(dbPath);
+    seedDefaultProviders(dbPath);
+    const user = createUser(dbPath, "rudy@example.local", "secret-test");
+    const other = createUser(dbPath, "other@example.local", "secret-test");
+    const project = createProject(dbPath, user.id, "TorquePilot", "RAG mécanique");
+    const data = listDashboardData(dbPath, user.id);
+    const openai = data.providers.find((p) => p.name === "OpenAI")!;
+    const gpt = data.models.find((m) => m.name === "GPT-4.1")!;
+
+    const account = createAiAccount(dbPath, user.id, { providerId: openai.id, name: "OpenAI API", connectionType: "api" });
+    const updatedAccount = updateAiAccount(dbPath, user.id, account.id, {
+      providerId: openai.id,
+      name: "ChatGPT Plus Rudy",
+      connectionType: "subscription",
+      subscriptionName: "ChatGPT Plus",
+      monthlyCostEur: 22,
+      notes: "Compte principal",
+    });
+    assert.equal(updatedAccount.name, "ChatGPT Plus Rudy");
+    assert.equal(updatedAccount.connectionType, "subscription");
+    assert.equal(updatedAccount.monthlyCostEur, 22);
+
+    const setup = assignAiAccountToProject(dbPath, user.id, { projectId: project.id, accountId: account.id, modelId: gpt.id });
+    const updatedSetup = updateProjectAiSetup(dbPath, user.id, setup.id, {
+      projectId: project.id,
+      accountId: account.id,
+      modelId: gpt.id,
+      connectionType: "api",
+      label: "API principale TorquePilot",
+      inputPricePerMillion: 3,
+      outputPricePerMillion: 9,
+    });
+    assert.equal(updatedSetup.label, "API principale TorquePilot");
+    assert.equal(updatedSetup.connectionType, "api");
+    assert.equal(updatedSetup.inputPricePerMillion, 3);
+
+    assert.throws(() => updateAiAccount(dbPath, other.id, account.id, { name: "Intrusion", connectionType: "api" }), /Compte IA inconnu/);
+    assert.equal(deleteProjectAiSetup(dbPath, user.id, setup.id), true);
+    assert.equal(deleteAiAccount(dbPath, user.id, account.id), true);
+    const dashboard = listDashboardData(dbPath, user.id, project.id);
+    assert.equal(dashboard.projectAiSetups.length, 0);
+    assert.equal(dashboard.aiAccounts.length, 0);
+  } finally {
+    cleanup();
+  }
+});
+
+test("interface publique sans mention KIRO", () => {
+  const page = readFileSync(join(process.cwd(), "app", "page.tsx"), "utf8");
+  assert.equal(/KIRO/i.test(page), false);
 });
 
 test("estimation automatique tokens/coût pour configuration API", () => {

@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { DB_PATH, USAGE_INBOX_DIR, assignAiAccountToProject, createAiAccount, createProject, createUser, estimateProjectUsage, getUsageCollectorHealth, getUserById, importConnectorUsage, importUsageInbox, listDashboardData, seedDefaultProviders, verifyUser } from "../lib/db";
+import { DB_PATH, USAGE_INBOX_DIR, assignAiAccountToProject, createAiAccount, createProject, createUser, deleteAiAccount, deleteProjectAiSetup, estimateProjectUsage, getUsageCollectorHealth, getUserById, importConnectorUsage, importUsageInbox, listDashboardData, seedDefaultProviders, updateAiAccount, updateProjectAiSetup, verifyUser } from "../lib/db";
 import { makeSession, readSession } from "../lib/session";
 
 export const dynamic = "force-dynamic";
@@ -62,6 +62,33 @@ async function createAiAccountAction(formData: FormData) {
   } catch { redirect(`/?project=${projectId || ""}&error=Compte IA refusé`); }
   redirect(`/?project=${projectId || ""}`);
 }
+async function updateAiAccountAction(formData: FormData) {
+  "use server";
+  const userId = await currentUserId();
+  if (!userId) redirect("/");
+  const projectId = Number(formData.get("projectId") || 0);
+  try {
+    updateAiAccount(DB_PATH, userId, Number(formData.get("accountId") || 0), {
+      providerId: Number(formData.get("providerId") || 0) || null,
+      name: String(formData.get("name") || ""),
+      connectionType: String(formData.get("connectionType") || "subscription") as any,
+      subscriptionName: String(formData.get("subscriptionName") || ""),
+      monthlyCostEur: Number(formData.get("monthlyCostEur") || 0),
+      notes: String(formData.get("notes") || ""),
+    });
+    revalidatePath("/");
+  } catch { redirect(`/?project=${projectId || ""}&error=Modification compte IA refusée`); }
+  redirect(`/?project=${projectId || ""}`);
+}
+async function deleteAiAccountAction(formData: FormData) {
+  "use server";
+  const userId = await currentUserId();
+  if (!userId) redirect("/");
+  const projectId = Number(formData.get("projectId") || 0);
+  try { deleteAiAccount(DB_PATH, userId, Number(formData.get("accountId") || 0)); revalidatePath("/"); }
+  catch { redirect(`/?project=${projectId || ""}&error=Suppression compte IA refusée`); }
+  redirect(`/?project=${projectId || ""}`);
+}
 async function assignAiSetupAction(formData: FormData) {
   "use server";
   const userId = await currentUserId();
@@ -77,6 +104,32 @@ async function assignAiSetupAction(formData: FormData) {
     });
     revalidatePath("/");
   } catch { redirect(`/?project=${projectId || ""}&error=Affectation IA refusée`); }
+  redirect(`/?project=${projectId}`);
+}
+async function updateAiSetupAction(formData: FormData) {
+  "use server";
+  const userId = await currentUserId();
+  if (!userId) redirect("/");
+  const projectId = Number(formData.get("projectId") || 0);
+  try {
+    updateProjectAiSetup(DB_PATH, userId, Number(formData.get("setupId") || 0), {
+      projectId,
+      accountId: Number(formData.get("accountId") || 0),
+      modelId: Number(formData.get("modelId") || 0) || null,
+      connectionType: String(formData.get("connectionType") || "subscription") as any,
+      label: String(formData.get("label") || ""),
+    });
+    revalidatePath("/");
+  } catch { redirect(`/?project=${projectId || ""}&error=Modification affectation IA refusée`); }
+  redirect(`/?project=${projectId}`);
+}
+async function deleteAiSetupAction(formData: FormData) {
+  "use server";
+  const userId = await currentUserId();
+  if (!userId) redirect("/");
+  const projectId = Number(formData.get("projectId") || 0);
+  try { deleteProjectAiSetup(DB_PATH, userId, Number(formData.get("setupId") || 0)); revalidatePath("/"); }
+  catch { redirect(`/?project=${projectId || ""}&error=Suppression affectation IA refusée`); }
   redirect(`/?project=${projectId}`);
 }
 async function estimateUsageAction(formData: FormData) {
@@ -181,7 +234,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
   ];
 
   return <main className="shell">
-    <section className="hero"><div><p className="eyebrow">Connecté : {user.email}</p><h1>TorquePilot AI Conso</h1><p className="subtitle">Phase 4D : collecteur local surveillé sans clé API, inbox/processed/failed, historique des runs et santé collecte.</p></div><form action={logoutAction}><button className="ghost">Déconnexion</button></form></section>
+    <section className="hero"><div><p className="eyebrow">Connecté : {user.email}</p><h1>TorquePilot AI Conso</h1><p className="subtitle">Tableau de bord simplifié : 1) projet, 2) compte IA ou abonnement, 3) modèle associé, 4) import local sans clé API.</p></div><form action={logoutAction}><button className="ghost">Déconnexion</button></form></section>
     {params?.error && <p className="alert">{params.error}</p>}
     <section className="grid stats">{stats.map(([label, value, hint]) => <article className="card" key={label}><span>{label}</span><strong>{value}</strong><small>{hint}</small></article>)}</section>
 
@@ -190,7 +243,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
         <form action={createProjectAction} className="inlineForm"><input name="name" placeholder="Nom projet ex: TorquePilot RAG" required /><input name="description" placeholder="Description" /><button>Ajouter projet</button></form>
         <div className="projectTabs">{data.projects.length ? data.projects.map((p) => <a className={selectedProject?.id === p.id ? "tab active" : "tab"} href={`/?project=${p.id}`} key={p.id}><strong>{p.name}</strong><small>{p.description || "Sans description"}</small></a>) : <p className="muted">Dashboard vierge : ajoute ton premier projet.</p>}</div>
       </article>
-      <aside className="panel"><h2>Catalogue IA automatique</h2><p className="muted">KIRO v3.0 : {data.models.length} modèles · {Object.entries(categoryCounts).map(([cat, count]) => `${categoryLabel(cat)} ${count}`).join(" · ")}</p><ul className="tasks">{data.models.slice(0, 14).map((m) => <li key={m.id}><span>{m.providerName} · {categoryLabel(m.category)}</span><strong>{m.name}</strong><small>{modelPriceDetail(m)}</small></li>)}</ul></aside>
+      <aside className="panel"><h2>Catalogue IA automatique</h2><p className="muted">Catalogue local : {data.models.length} modèles · {Object.entries(categoryCounts).map(([cat, count]) => `${categoryLabel(cat)} ${count}`).join(" · ")}</p><ul className="tasks">{data.models.slice(0, 14).map((m) => <li key={m.id}><span>{m.providerName} · {categoryLabel(m.category)}</span><strong>{m.name}</strong><small>{modelPriceDetail(m)}</small></li>)}</ul></aside>
     </section>
 
     <section className="layout usageLayout">
@@ -207,7 +260,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
         </form>
       </article>
 
-      <aside className="panel"><h2>Comptes enregistrés</h2><div className="list">{data.aiAccounts.length ? data.aiAccounts.map((a) => <div className="row compact" key={a.id}><div><h3>{a.name}</h3><p>{a.providerName || "Fournisseur"} · {connectionLabel(a.connectionType)}{a.subscriptionName ? ` · ${a.subscriptionName}` : ""}</p></div><span className="pill">{euro(a.monthlyCostEur)}/mois</span></div>) : <p className="muted">Aucun compte IA : ajoute ton abonnement ou ta connexion API.</p>}</div></aside>
+      <aside className="panel"><h2>Comptes enregistrés</h2><p className="muted">Chaque carte peut être corrigée ou supprimée. Aucune clé API n’est affichée ni stockée ici.</p><div className="list">{data.aiAccounts.length ? data.aiAccounts.map((a) => <details className="row compact editable" key={a.id}><summary><div><h3>{a.name}</h3><p>{a.providerName || "Fournisseur"} · {connectionLabel(a.connectionType)}{a.subscriptionName ? ` · ${a.subscriptionName}` : ""}</p></div><span className="pill">{euro(a.monthlyCostEur)}/mois</span></summary><form action={updateAiAccountAction} className="usageForm miniForm"><input type="hidden" name="projectId" value={selectedProject?.id ?? ""} /><input type="hidden" name="accountId" value={a.id} /><label>Nom<input name="name" defaultValue={a.name} required /></label><label>Entreprise<select name="providerId" defaultValue={a.providerId ?? ""} required>{data.providers.map((p) => <option value={p.id} key={p.id}>{p.name}</option>)}</select></label><label>Type<select name="connectionType" defaultValue={a.connectionType}><option value="subscription">Abonnement</option><option value="api">API</option><option value="local">Local</option></select></label><label>Nom abonnement<input name="subscriptionName" defaultValue={a.subscriptionName ?? ""} /></label><label>Coût mensuel €<input name="monthlyCostEur" type="number" min="0" step="0.01" defaultValue={a.monthlyCostEur} /></label><label>Notes<input name="notes" defaultValue={a.notes ?? ""} /></label><button>Modifier</button></form><form action={deleteAiAccountAction} className="dangerForm"><input type="hidden" name="projectId" value={selectedProject?.id ?? ""} /><input type="hidden" name="accountId" value={a.id} /><button className="danger">Supprimer ce compte</button><small>Supprime aussi ses affectations projet.</small></form></details>) : <p className="muted">Aucun compte IA : ajoute ton abonnement ou ta connexion API.</p>}</div></aside>
     </section>
 
     <section className="layout usageLayout">
@@ -218,11 +271,11 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
           <label>Modèle<select name="modelId" required>{data.models.map((m) => <option value={m.id} key={m.id}>{m.providerName} — {m.name} · {categoryLabel(m.category)}</option>)}</select></label>
           <label>Type pour ce projet<select name="connectionType" defaultValue="subscription"><option value="subscription">Abonnement</option><option value="api">API</option><option value="local">Local</option></select></label>
           <label>Libellé<input name="label" placeholder="Ex: Compte principal TorquePilot" /></label>
-          <p className="muted">Les prix ne sont plus saisis manuellement : ils viennent automatiquement du catalogue KIRO/SQLite selon le modèle choisi.</p>
+          <p className="muted">Les prix ne sont plus saisis manuellement : ils viennent automatiquement du catalogue local selon le modèle choisi.</p>
           <button>Affecter au projet</button>
         </form> : <p className="muted">Ajoute d’abord un projet et un compte IA.</p>}
       </article>
-      <aside className="panel"><h2>IA affectées au projet</h2><div className="list">{data.projectAiSetups.length ? data.projectAiSetups.map((s) => <div className="row compact" key={s.id}><div><h3>{s.label}</h3><p>{s.accountName} · {s.providerName || "IA"} · {s.modelName || "Modèle"}</p><p>{connectionLabel(s.connectionType)} · Input {price(s.inputPricePerMillion)} · Output {price(s.outputPricePerMillion)}</p></div><span className="pill">{s.connectionType === "subscription" ? `${euro(s.monthlyCostEur)}/mois` : "estimable"}</span></div>) : <p className="muted">Aucune IA affectée à ce projet.</p>}</div></aside>
+      <aside className="panel"><h2>IA affectées au projet</h2><p className="muted">Ouvre une carte pour changer le compte, le modèle ou retirer l’association.</p><div className="list">{data.projectAiSetups.length ? data.projectAiSetups.map((s) => <details className="row compact editable" key={s.id}><summary><div><h3>{s.label}</h3><p>{s.accountName} · {s.providerName || "IA"} · {s.modelName || "Modèle"}</p><p>{connectionLabel(s.connectionType)} · Input {price(s.inputPricePerMillion)} · Output {price(s.outputPricePerMillion)}</p></div><span className="pill">{s.connectionType === "subscription" ? `${euro(s.monthlyCostEur)}/mois` : "estimable"}</span></summary>{selectedProject && <form action={updateAiSetupAction} className="usageForm miniForm"><input type="hidden" name="projectId" value={selectedProject.id} /><input type="hidden" name="setupId" value={s.id} /><label>Compte IA<select name="accountId" defaultValue={s.accountId} required>{data.aiAccounts.map((a) => <option value={a.id} key={a.id}>{a.name} — {connectionLabel(a.connectionType)}</option>)}</select></label><label>Modèle<select name="modelId" defaultValue={s.modelId ?? ""} required>{data.models.map((m) => <option value={m.id} key={m.id}>{m.providerName} — {m.name} · {categoryLabel(m.category)}</option>)}</select></label><label>Type<select name="connectionType" defaultValue={s.connectionType}><option value="subscription">Abonnement</option><option value="api">API</option><option value="local">Local</option></select></label><label>Libellé<input name="label" defaultValue={s.label} /></label><button>Modifier l’affectation</button></form>}<form action={deleteAiSetupAction} className="dangerForm"><input type="hidden" name="projectId" value={selectedProject?.id ?? ""} /><input type="hidden" name="setupId" value={s.id} /><button className="danger">Retirer du projet</button><small>Ne supprime pas le compte IA, seulement son lien avec ce projet.</small></form></details>) : <p className="muted">Aucune IA affectée à ce projet.</p>}</div></aside>
     </section>
 
     <section className="layout usageLayout">

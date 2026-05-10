@@ -10,3 +10,4 @@ build
 .vercel
 data/*.sqlite
 data/*.sqlite-*
+data/usage-inbox/
