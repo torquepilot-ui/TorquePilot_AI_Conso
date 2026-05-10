@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { DB_PATH, USAGE_INBOX_DIR, USAGE_REPORTS_DIR, assignAiAccountToProject, createAiAccount, createProject, createUser, deleteAiAccount, deleteProject, deleteProjectAiSetup, deleteSavedUsageReport, estimateProjectUsage, getUsageCollectorHealth, getUserById, importConnectorUsage, importUsageInbox, listDashboardData, listSavedUsageReports, previewUsageInbox, seedDefaultProviders, updateAiAccount, updateProjectAiSetup, verifyUser } from "../lib/db";
+import { DB_PATH, USAGE_INBOX_DIR, USAGE_REPORTS_DIR, assignAiAccountToProject, createAiAccount, createProject, createUser, deleteAiAccount, deleteProject, deleteProjectAiSetup, deleteSavedUsageReport, estimateProjectUsage, getUsageCollectorHealth, getUserById, importConnectorUsage, importUsageInbox, listDashboardData, listSavedUsageReports, previewUsageInbox, seedDefaultProviders, updateAiAccount, updateProject, updateProjectAiSetup, verifyUser } from "../lib/db";
 import { makeSession, readSession } from "../lib/session";
 
 export const dynamic = "force-dynamic";
@@ -19,7 +19,7 @@ async function registerAction(formData: FormData) {
   const email = String(formData.get("email") || "");
   const password = String(formData.get("password") || "");
   if (!email || password.length < 8) redirect("/?error=Mot de passe minimum 8 caractères");
-  try { const user = createUser(DB_PATH, email, password); await setSession(user.id); } catch { redirect("/?error=Compte déjà existant ou saisie invalide"); }
+  try { const user = createUser(DB_PATH, email, password); await setSession(user.id); } catch (err) { console.error("[registerAction]", err); redirect("/?error=Compte déjà existant ou saisie invalide"); }
   redirect("/");
 }
 async function loginAction(formData: FormData) {
@@ -49,8 +49,19 @@ async function deleteProjectAction(formData: FormData) {
   const userId = await currentUserId();
   if (!userId) redirect("/");
   try { deleteProject(DB_PATH, userId, Number(formData.get("projectId") || 0)); revalidatePath("/"); }
-  catch { redirect(`/?project=${formData.get("projectId") || ""}&error=Suppression projet refusée`); }
+  catch (err) { console.error("[deleteProjectAction]", err); redirect(`/?project=${formData.get("projectId") || ""}&error=Suppression projet refusée`); }
   redirect("/");
+}
+async function updateProjectAction(formData: FormData) {
+  "use server";
+  const userId = await currentUserId();
+  if (!userId) redirect("/");
+  const projectId = Number(formData.get("projectId") || 0);
+  try {
+    updateProject(DB_PATH, userId, projectId, String(formData.get("name") || ""), String(formData.get("description") || ""));
+    revalidatePath("/");
+  } catch (err) { console.error("[updateProjectAction]", err); redirect(`/?project=${projectId}&error=Modification projet refusée`); }
+  redirect(`/?project=${projectId}`);
 }
 async function createAiAccountAction(formData: FormData) {
   "use server";
@@ -67,7 +78,7 @@ async function createAiAccountAction(formData: FormData) {
       notes: String(formData.get("notes") || ""),
     });
     revalidatePath("/");
-  } catch { redirect(`/?project=${projectId || ""}&error=Compte IA refusé`); }
+  } catch (err) { console.error("[createAiAccountAction]", err); redirect(`/?project=${projectId || ""}&error=Compte IA refusé`); }
   redirect(`/?project=${projectId || ""}`);
 }
 async function updateAiAccountAction(formData: FormData) {
@@ -85,7 +96,7 @@ async function updateAiAccountAction(formData: FormData) {
       notes: String(formData.get("notes") || ""),
     });
     revalidatePath("/");
-  } catch { redirect(`/?project=${projectId || ""}&error=Modification compte IA refusée`); }
+  } catch (err) { console.error("[updateAiAccountAction]", err); redirect(`/?project=${projectId || ""}&error=Modification compte IA refusée`); }
   redirect(`/?project=${projectId || ""}`);
 }
 async function deleteAiAccountAction(formData: FormData) {
@@ -94,7 +105,7 @@ async function deleteAiAccountAction(formData: FormData) {
   if (!userId) redirect("/");
   const projectId = Number(formData.get("projectId") || 0);
   try { deleteAiAccount(DB_PATH, userId, Number(formData.get("accountId") || 0)); revalidatePath("/"); }
-  catch { redirect(`/?project=${projectId || ""}&error=Suppression compte IA refusée`); }
+  catch (err) { console.error("[deleteAiAccountAction]", err); redirect(`/?project=${projectId || ""}&error=Suppression compte IA refusée`); }
   redirect(`/?project=${projectId || ""}`);
 }
 async function assignAiSetupAction(formData: FormData) {
@@ -111,7 +122,7 @@ async function assignAiSetupAction(formData: FormData) {
       label: String(formData.get("label") || ""),
     });
     revalidatePath("/");
-  } catch { redirect(`/?project=${projectId || ""}&error=Affectation IA refusée`); }
+  } catch (err) { console.error("[assignAiSetupAction]", err); redirect(`/?project=${projectId || ""}&error=Affectation IA refusée`); }
   redirect(`/?project=${projectId}`);
 }
 async function updateAiSetupAction(formData: FormData) {
@@ -128,7 +139,7 @@ async function updateAiSetupAction(formData: FormData) {
       label: String(formData.get("label") || ""),
     });
     revalidatePath("/");
-  } catch { redirect(`/?project=${projectId || ""}&error=Modification affectation IA refusée`); }
+  } catch (err) { console.error("[updateAiSetupAction]", err); redirect(`/?project=${projectId || ""}&error=Modification affectation IA refusée`); }
   redirect(`/?project=${projectId}`);
 }
 async function deleteAiSetupAction(formData: FormData) {
@@ -137,7 +148,7 @@ async function deleteAiSetupAction(formData: FormData) {
   if (!userId) redirect("/");
   const projectId = Number(formData.get("projectId") || 0);
   try { deleteProjectAiSetup(DB_PATH, userId, Number(formData.get("setupId") || 0)); revalidatePath("/"); }
-  catch { redirect(`/?project=${projectId || ""}&error=Suppression affectation IA refusée`); }
+  catch (err) { console.error("[deleteAiSetupAction]", err); redirect(`/?project=${projectId || ""}&error=Suppression affectation IA refusée`); }
   redirect(`/?project=${projectId}`);
 }
 async function estimateUsageAction(formData: FormData) {
@@ -155,7 +166,7 @@ async function estimateUsageAction(formData: FormData) {
       usedAt: String(formData.get("usedAt") || ""),
     });
     revalidatePath("/");
-  } catch { redirect(`/?project=${projectId || ""}&error=Estimation refusée`); }
+  } catch (err) { console.error("[estimateUsageAction]", err); redirect(`/?project=${projectId || ""}&error=Estimation refusée`); }
   redirect(`/?project=${projectId}`);
 }
 async function importUsageAction(formData: FormData) {
@@ -173,7 +184,7 @@ async function importUsageAction(formData: FormData) {
       usedAt: String(formData.get("usedAt") || ""),
     });
     revalidatePath("/");
-  } catch { redirect(`/?project=${projectId || ""}&error=Import automatique refusé`); }
+  } catch (err) { console.error("[importUsageAction]", err); redirect(`/?project=${projectId || ""}&error=Import automatique refusé`); }
   redirect(`/?project=${projectId}`);
 }
 async function importInboxAction(formData: FormData) {
@@ -184,7 +195,7 @@ async function importInboxAction(formData: FormData) {
   try {
     importUsageInbox(DB_PATH, userId, { rootDir: USAGE_INBOX_DIR, projectId, setupId: Number(formData.get("setupId") || 0), usedAt: String(formData.get("usedAt") || "") });
     revalidatePath("/");
-  } catch { redirect(`/?project=${projectId || ""}&error=Import dossier refusé`); }
+  } catch (err) { console.error("[importInboxAction]", err); redirect(`/?project=${projectId || ""}&error=Import dossier refusé`); }
   redirect(`/?project=${projectId}`);
 }
 async function deleteSavedReportAction(formData: FormData) {
@@ -195,7 +206,7 @@ async function deleteSavedReportAction(formData: FormData) {
   try {
     deleteSavedUsageReport(USAGE_REPORTS_DIR, String(formData.get("fileName") || ""));
     revalidatePath("/");
-  } catch { redirect(`/?project=${projectId || ""}&error=Suppression rapport refusée`); }
+  } catch (err) { console.error("[deleteSavedReportAction]", err); redirect(`/?project=${projectId || ""}&error=Suppression rapport refusée`); }
   redirect(`/?project=${projectId || ""}`);
 }
 function AuthScreen({ error }: { error?: string }) {
@@ -265,8 +276,23 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
     <section className="layout">
       <article className="panel"><div className="sectionHeader"><div><p className="eyebrow">Espace projet</p><h2>{selectedProject ? selectedProject.name : "Aucun projet"}</h2></div>{selectedProject && <span className="pill">API {euro(data.projectUsage.cost)} · Abos {euro(data.projectUsage.subscriptionMonthly)}/mois</span>}</div>
         <form action={createProjectAction} className="inlineForm"><input name="name" placeholder="Nom projet ex: TorquePilot RAG" required /><input name="description" placeholder="Description" /><button>Ajouter projet</button></form>
-        {selectedProject && <form action={deleteProjectAction} className="dangerForm"><input type="hidden" name="projectId" value={selectedProject.id} /><button className="danger">Supprimer ce projet</button><small>Supprime le projet sélectionné et ses données locales liées.</small></form>}
-        <div className="projectTabs">{data.projects.length ? data.projects.map((p) => <a className={selectedProject?.id === p.id ? "tab active" : "tab"} href={`/?project=${p.id}`} key={p.id}><strong>{p.name}</strong><small>{p.description || "Sans description"}</small></a>) : <p className="muted">Dashboard vierge : ajoute ton premier projet.</p>}</div>
+        <div className="projectTabs">{data.projects.length ? data.projects.map((p) => p.id === selectedProject?.id
+          ? <details className="tab active editable" key={p.id}>
+              <summary><div><strong>{p.name}</strong><small>{p.description || "Sans description"}</small></div></summary>
+              <form action={updateProjectAction} className="usageForm miniForm">
+                <input type="hidden" name="projectId" value={p.id} />
+                <label>Nom<input name="name" defaultValue={p.name} required /></label>
+                <label>Description<input name="description" defaultValue={p.description ?? ""} /></label>
+                <button>Enregistrer les modifications</button>
+              </form>
+              <form action={deleteProjectAction} className="dangerForm">
+                <input type="hidden" name="projectId" value={p.id} />
+                <button className="danger">Supprimer ce projet</button>
+                <small>Supprime les affectations IA et l'historique d'usage.</small>
+              </form>
+            </details>
+          : <a className="tab" href={`/?project=${p.id}`} key={p.id}><strong>{p.name}</strong><small>{p.description || "Sans description"}</small></a>
+        ) : <p className="muted">Dashboard vierge : ajoute ton premier projet.</p>}</div>
       </article>
       <aside className="panel"><h2>Catalogue IA automatique</h2><p className="muted">Catalogue local : {data.models.length} modèles · {Object.entries(categoryCounts).map(([cat, count]) => `${categoryLabel(cat)} ${count}`).join(" · ")}</p><ul className="tasks">{data.models.slice(0, 14).map((m) => <li key={m.id}><span>{m.providerName} · {categoryLabel(m.category)}</span><strong>{m.name}</strong><small>{modelPriceDetail(m)}</small></li>)}</ul></aside>
     </section>

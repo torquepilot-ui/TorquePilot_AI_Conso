@@ -253,6 +253,16 @@ export function deleteProject(dbPath: string, userId: number, projectId: number)
 export function userCanAccessProject(dbPath: string, userId: number, projectId: number) {
   initDb(dbPath); const db = open(dbPath); const row = db.prepare("SELECT 1 FROM project_members WHERE user_id = ? AND project_id = ?").get(userId, projectId); db.close(); return Boolean(row);
 }
+export function updateProject(dbPath: string, userId: number, projectId: number, name: string, description: string): Project {
+  initDb(dbPath); const db = open(dbPath);
+  try {
+    const existing = db.prepare("SELECT 1 FROM projects WHERE id = ? AND owner_user_id = ?").get(projectId, userId);
+    if (!existing) throw new Error("Projet inconnu");
+    const trimmedName = name.trim(); if (!trimmedName) throw new Error("Nom de projet obligatoire");
+    db.prepare("UPDATE projects SET name = ?, description = ? WHERE id = ? AND owner_user_id = ?").run(trimmedName, description.trim(), projectId, userId);
+    return db.prepare("SELECT id, name, description, owner_user_id as ownerUserId FROM projects WHERE id = ?").get(projectId) as Project;
+  } finally { db.close(); }
+}
 
 export function seedDefaultProviders(dbPath = defaultDbPath) {
   initDb(dbPath); const db = open(dbPath);
@@ -313,9 +323,8 @@ export function deleteAiAccount(dbPath: string, userId: number, accountId: numbe
     if (!existing) throw new Error("Compte IA inconnu");
     db.exec("BEGIN");
     try {
-      db.prepare(`UPDATE ai_usage_entries SET account_id = NULL, setup_id = NULL
-        WHERE account_id = ? OR setup_id IN (SELECT s.id FROM project_ai_setups s JOIN ai_accounts a ON a.id = s.account_id WHERE s.account_id = ? AND a.user_id = ?)`)
-        .run(accountId, accountId, userId);
+      db.prepare("UPDATE ai_usage_entries SET account_id = NULL WHERE account_id = ?").run(accountId);
+      db.prepare("UPDATE ai_usage_entries SET setup_id = NULL WHERE setup_id IN (SELECT id FROM project_ai_setups WHERE account_id = ?)").run(accountId);
       db.prepare(`DELETE FROM usage_import_runs
         WHERE setup_id IN (SELECT s.id FROM project_ai_setups s JOIN ai_accounts a ON a.id = s.account_id WHERE s.account_id = ? AND a.user_id = ?)`)
         .run(accountId, userId);
