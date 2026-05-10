@@ -17,6 +17,7 @@ import {
   estimateProjectUsage,
   estimateTokensFromText,
   importAutomaticUsage,
+  importConnectorUsage,
 } from "./db.ts";
 import { MODEL_CATALOG } from "./model-catalog.ts";
 
@@ -239,6 +240,66 @@ test("Phase 4B : import automatique texte brut estime les tokens sans coût manu
     assert.equal(result.totalOutputTokens, estimateTokensFromText("r".repeat(800)));
     assert.equal(result.totalCostEur, 0);
     assert.equal(result.entries[0].label, "Conversation collée");
+  } finally {
+    cleanup();
+  }
+});
+
+test("Phase 4C : connecteur OpenAI importe un export réel Responses/usage", () => {
+  const { dbPath, cleanup } = tempDb();
+  try {
+    initDb(dbPath);
+    seedDefaultProviders(dbPath);
+    const user = createUser(dbPath, "rudy@example.local", "secret-test");
+    const other = createUser(dbPath, "other@example.local", "secret-test");
+    const project = createProject(dbPath, user.id, "TorquePilot", "RAG mécanique");
+    const data = listDashboardData(dbPath, user.id);
+    const openai = data.providers.find((p) => p.name === "OpenAI")!;
+    const gpt = data.models.find((m) => m.name === "GPT-4.1")!;
+    const account = createAiAccount(dbPath, user.id, { providerId: openai.id, name: "OpenAI usage export", connectionType: "api" });
+    const setup = assignAiAccountToProject(dbPath, user.id, { projectId: project.id, accountId: account.id, modelId: gpt.id, connectionType: "api" });
+
+    const rawExport = JSON.stringify({
+      object: "list",
+      data: [
+        { id: "resp_1", created_at: 1778323200, model: "gpt-4.1-2025-04-14", usage: { input_tokens: 1200, output_tokens: 400 } },
+        { id: "chatcmpl_2", created: 1778326800, usage: { prompt_tokens: 800, completion_tokens: 200 } },
+      ],
+    });
+    const result = importConnectorUsage(dbPath, user.id, { connector: "openai", projectId: project.id, setupId: setup.id, sourceName: "OpenAI Responses export", rawExport });
+    assert.equal(result.importedCount, 2);
+    assert.equal(result.totalInputTokens, 2000);
+    assert.equal(result.totalOutputTokens, 600);
+    assert.equal(result.totalCostEur, 0.0088);
+    assert.match(result.entries[0].label, /OpenAI · resp_1/);
+    assert.equal(result.entries[0].usedAt, "2026-05-09");
+    assert.throws(() => importConnectorUsage(dbPath, other.id, { connector: "openai", projectId: project.id, setupId: setup.id, sourceName: "intrusion", rawExport }), /Accès projet refusé/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("Phase 4C : connecteurs Anthropic, Gemini et Ollama normalisent les logs locaux", () => {
+  const { dbPath, cleanup } = tempDb();
+  try {
+    initDb(dbPath);
+    seedDefaultProviders(dbPath);
+    const user = createUser(dbPath, "rudy@example.local", "secret-test");
+    const project = createProject(dbPath, user.id, "Local Lab", "Logs fournisseurs");
+    const data = listDashboardData(dbPath, user.id);
+    const openai = data.providers.find((p) => p.name === "OpenAI")!;
+    const gpt = data.models.find((m) => m.name === "GPT-4.1")!;
+    const account = createAiAccount(dbPath, user.id, { providerId: openai.id, name: "Connecteurs locaux", connectionType: "api" });
+    const setup = assignAiAccountToProject(dbPath, user.id, { projectId: project.id, accountId: account.id, modelId: gpt.id, connectionType: "api" });
+
+    const anthropic = importConnectorUsage(dbPath, user.id, { connector: "anthropic", projectId: project.id, setupId: setup.id, sourceName: "Claude usage", rawExport: JSON.stringify({ id: "msg_1", usage: { input_tokens: 700, output_tokens: 300 }, created_at: "2026-05-09T08:00:00Z" }) });
+    const gemini = importConnectorUsage(dbPath, user.id, { connector: "google", projectId: project.id, setupId: setup.id, sourceName: "Gemini usage", rawExport: JSON.stringify({ responseId: "gem_1", usageMetadata: { promptTokenCount: 600, candidatesTokenCount: 250 }, createTime: "2026-05-09T09:00:00Z" }) });
+    const ollama = importConnectorUsage(dbPath, user.id, { connector: "ollama", projectId: project.id, setupId: setup.id, sourceName: "Ollama local", rawExport: JSON.stringify({ model: "llama3.1", prompt_eval_count: 500, eval_count: 125, created_at: "2026-05-09T10:00:00Z" }) });
+
+    assert.equal(anthropic.totalInputTokens, 700);
+    assert.equal(gemini.totalOutputTokens, 250);
+    assert.equal(ollama.totalCostEur, 0);
+    assert.equal(listDashboardData(dbPath, user.id, project.id).usageEntries.length, 3);
   } finally {
     cleanup();
   }

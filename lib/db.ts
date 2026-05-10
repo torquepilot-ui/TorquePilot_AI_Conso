@@ -68,6 +68,8 @@ export type AiAccountInput = { providerId?: number | null; name: string; connect
 export type ProjectAiSetupInput = { projectId: number; accountId: number; modelId?: number | null; connectionType?: ConnectionType; label?: string; inputPricePerMillion?: number | null; outputPricePerMillion?: number | null };
 export type EstimateInput = { projectId: number; setupId: number; label: string; inputText: string; outputText: string; usedAt?: string };
 export type AutomaticUsageImportInput = { projectId: number; setupId: number; sourceName: string; rawExport: string; usedAt?: string };
+export type UsageConnector = "generic" | "openai" | "anthropic" | "google" | "ollama" | "local";
+export type ConnectorUsageImportInput = AutomaticUsageImportInput & { connector: UsageConnector };
 export type AutomaticUsageImportResult = { importedCount: number; totalInputTokens: number; totalOutputTokens: number; totalCostEur: number; entries: UsageEntry[] };
 
 const defaultDbPath = join(process.cwd(), "data", "torquepilot.sqlite");
@@ -299,19 +301,25 @@ export function estimateProjectUsage(dbPath: string, userId: number, input: Esti
   } finally { db.close(); }
 }
 
-type ParsedUsageCandidate = { label: string; inputTokens: number; outputTokens: number; usedAt: string; method: string };
+type ParsedUsageCandidate = { label: string; inputTokens: number; outputTokens: number; usedAt: string; method: string; forceZeroCost?: boolean };
+function getPath(record: any, key: string) { return key.split(".").reduce((acc, part) => acc == null ? undefined : acc[part], record); }
 function pickFirstNumber(record: any, keys: string[]) {
   for (const key of keys) {
-    const value = key.split(".").reduce((acc, part) => acc == null ? undefined : acc[part], record);
+    const value = getPath(record, key);
     const n = Number(value);
     if (Number.isFinite(n) && n >= 0) return Math.round(n);
   }
   return null;
 }
+function normalizeDate(value: unknown, fallbackDate: string) {
+  if (typeof value === "number" && Number.isFinite(value)) return new Date(value * 1000).toISOString().slice(0, 10);
+  const raw = String(value ?? fallbackDate).trim();
+  return raw ? raw.slice(0, 10) : fallbackDate;
+}
 function normalizeUsageRecord(record: any, sourceName: string, fallbackDate: string): ParsedUsageCandidate | null {
   if (!record || typeof record !== "object") return null;
-  const inputTokens = pickFirstNumber(record, ["input_tokens", "prompt_tokens", "usage.input_tokens", "usage.prompt_tokens", "tokens.input", "inputTokens"]);
-  const outputTokens = pickFirstNumber(record, ["output_tokens", "completion_tokens", "usage.output_tokens", "usage.completion_tokens", "tokens.output", "outputTokens"]);
+  const inputTokens = pickFirstNumber(record, ["input_tokens", "prompt_tokens", "usage.input_tokens", "usage.prompt_tokens", "usage.inputTokens", "tokens.input", "inputTokens"]);
+  const outputTokens = pickFirstNumber(record, ["output_tokens", "completion_tokens", "usage.output_tokens", "usage.completion_tokens", "usage.outputTokens", "tokens.output", "outputTokens"]);
   const inputText = String(record.input_text ?? record.prompt ?? record.request ?? "");
   const outputText = String(record.output_text ?? record.completion ?? record.response ?? "");
   const finalInput = inputTokens ?? estimateTokensFromText(inputText);
@@ -319,27 +327,48 @@ function normalizeUsageRecord(record: any, sourceName: string, fallbackDate: str
   if (finalInput + finalOutput <= 0) return null;
   const id = String(record.request_id ?? record.id ?? record.response_id ?? "").trim();
   const label = String(record.label ?? record.title ?? record.name ?? "").trim() || (id ? `${sourceName} · ${id}` : sourceName);
-  const rawDate = String(record.used_at ?? record.timestamp ?? record.created_at ?? record.createdAt ?? fallbackDate).trim();
-  return { label, inputTokens: finalInput, outputTokens: finalOutput, usedAt: rawDate.slice(0, 10), method: "json_usage_import" };
+  return { label, inputTokens: finalInput, outputTokens: finalOutput, usedAt: normalizeDate(record.used_at ?? record.timestamp ?? record.created_at ?? record.createdAt, fallbackDate), method: "json_usage_import" };
+}
+function normalizeConnectorRecord(record: any, connector: UsageConnector, sourceName: string, fallbackDate: string): ParsedUsageCandidate | null {
+  if (!record || typeof record !== "object") return null;
+  if (connector === "generic") return normalizeUsageRecord(record, sourceName, fallbackDate);
+  const specs: Record<Exclude<UsageConnector, "generic">, { label: string; input: string[]; output: string[]; id: string[]; date: string[]; method: string; forceZeroCost?: boolean }> = {
+    openai: { label: "OpenAI", input: ["usage.input_tokens", "usage.prompt_tokens", "input_tokens", "prompt_tokens"], output: ["usage.output_tokens", "usage.completion_tokens", "output_tokens", "completion_tokens"], id: ["id", "request_id", "response_id"], date: ["created_at", "created", "timestamp"], method: "openai_usage_connector" },
+    anthropic: { label: "Anthropic", input: ["usage.input_tokens", "input_tokens"], output: ["usage.output_tokens", "output_tokens"], id: ["id", "message_id"], date: ["created_at", "createdAt", "timestamp"], method: "anthropic_usage_connector" },
+    google: { label: "Google Gemini", input: ["usageMetadata.promptTokenCount", "usage_metadata.prompt_token_count", "promptTokenCount"], output: ["usageMetadata.candidatesTokenCount", "usage_metadata.candidates_token_count", "candidatesTokenCount"], id: ["responseId", "id", "name"], date: ["createTime", "created_at", "timestamp"], method: "google_usage_connector" },
+    ollama: { label: "Ollama", input: ["prompt_eval_count", "usage.prompt_eval_count", "input_tokens"], output: ["eval_count", "usage.eval_count", "output_tokens"], id: ["id", "model"], date: ["created_at", "timestamp"], method: "ollama_local_connector", forceZeroCost: true },
+    local: { label: "Local", input: ["input_tokens", "prompt_tokens", "prompt_eval_count"], output: ["output_tokens", "completion_tokens", "eval_count"], id: ["id", "model", "name"], date: ["created_at", "timestamp"], method: "local_usage_connector", forceZeroCost: true },
+  };
+  const spec = specs[connector];
+  const inputTokens = pickFirstNumber(record, spec.input);
+  const outputTokens = pickFirstNumber(record, spec.output);
+  const inputText = String(record.input_text ?? record.prompt ?? record.request ?? "");
+  const outputText = String(record.output_text ?? record.completion ?? record.response ?? "");
+  const finalInput = inputTokens ?? estimateTokensFromText(inputText);
+  const finalOutput = outputTokens ?? estimateTokensFromText(outputText);
+  if (finalInput + finalOutput <= 0) return null;
+  const id = spec.id.map((key) => String(getPath(record, key) ?? "").trim()).find(Boolean);
+  const rawDate = spec.date.map((key) => getPath(record, key)).find((value) => value != null);
+  return { label: id ? `${spec.label} · ${id}` : sourceName, inputTokens: finalInput, outputTokens: finalOutput, usedAt: normalizeDate(rawDate, fallbackDate), method: spec.method, forceZeroCost: spec.forceZeroCost };
 }
 function flattenUsagePayload(payload: any): any[] {
   if (Array.isArray(payload)) return payload;
   if (!payload || typeof payload !== "object") return [];
-  for (const key of ["data", "records", "requests", "usage", "items"]) if (Array.isArray(payload[key])) return payload[key];
+  for (const key of ["data", "records", "requests", "usage", "items", "responses", "messages"]) if (Array.isArray(payload[key])) return payload[key];
   return [payload];
 }
-function parseJsonUsage(raw: string, sourceName: string, fallbackDate: string) {
+function parseJsonUsage(raw: string, sourceName: string, fallbackDate: string, connector: UsageConnector = "generic") {
   const parsed: ParsedUsageCandidate[] = [];
   try {
     for (const record of flattenUsagePayload(JSON.parse(raw))) {
-      const candidate = normalizeUsageRecord(record, sourceName, fallbackDate);
+      const candidate = connector === "generic" ? normalizeUsageRecord(record, sourceName, fallbackDate) : normalizeConnectorRecord(record, connector, sourceName, fallbackDate);
       if (candidate) parsed.push(candidate);
     }
     if (parsed.length) return parsed;
   } catch {}
   for (const line of raw.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)) {
     try {
-      const candidate = normalizeUsageRecord(JSON.parse(line), sourceName, fallbackDate);
+      const candidate = connector === "generic" ? normalizeUsageRecord(JSON.parse(line), sourceName, fallbackDate) : normalizeConnectorRecord(JSON.parse(line), connector, sourceName, fallbackDate);
       if (candidate) parsed.push(candidate);
     } catch {}
   }
@@ -358,26 +387,26 @@ function parseAutomaticUsage(raw: string, sourceName: string, fallbackDate: stri
   const jsonRecords = parseJsonUsage(raw, sourceName, fallbackDate);
   return jsonRecords.length ? jsonRecords : parseTextUsage(raw, sourceName, fallbackDate);
 }
-
-export function importAutomaticUsage(dbPath: string, userId: number, input: AutomaticUsageImportInput): AutomaticUsageImportResult {
+function parseConnectorUsage(raw: string, connector: UsageConnector, sourceName: string, fallbackDate: string) {
+  const jsonRecords = parseJsonUsage(raw, sourceName, fallbackDate, connector);
+  return jsonRecords.length ? jsonRecords : parseTextUsage(raw, `${sourceName} · ${connector}`, fallbackDate);
+}
+function importParsedUsage(dbPath: string, userId: number, input: AutomaticUsageImportInput, candidates: ParsedUsageCandidate[]): AutomaticUsageImportResult {
   initDb(dbPath); seedDefaultProviders(dbPath); const db = open(dbPath);
   try {
     if (!db.prepare("SELECT 1 FROM project_members WHERE user_id = ? AND project_id = ?").get(userId, input.projectId)) throw new Error("Accès projet refusé");
     const setup = getSetupById(db, input.setupId);
     if (setup.projectId !== input.projectId) throw new Error("Configuration IA hors projet");
     if (!db.prepare("SELECT 1 FROM ai_accounts WHERE id = ? AND user_id = ?").get(setup.accountId, userId)) throw new Error("Compte IA refusé");
-    const sourceName = input.sourceName.trim() || "Import automatique";
-    const fallbackDate = input.usedAt?.trim() || new Date().toISOString().slice(0, 10);
-    const candidates = parseAutomaticUsage(input.rawExport, sourceName, fallbackDate);
     if (!candidates.length) throw new Error("Aucun usage importable détecté");
     const entries: UsageEntry[] = [];
     db.exec("BEGIN");
     try {
       for (const candidate of candidates) {
-        const costEur = setup.connectionType === "api" && setup.inputPricePerMillion != null && setup.outputPricePerMillion != null
+        const costEur = !candidate.forceZeroCost && setup.connectionType === "api" && setup.inputPricePerMillion != null && setup.outputPricePerMillion != null
           ? toNonNegativeMoney((candidate.inputTokens / 1_000_000) * setup.inputPricePerMillion + (candidate.outputTokens / 1_000_000) * setup.outputPricePerMillion)
           : 0;
-        const result = db.prepare(`INSERT INTO ai_usage_entries(project_id, model_id, account_id, setup_id, label, input_tokens, output_tokens, cost_eur, estimation_method, used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(input.projectId, setup.modelId, setup.accountId, setup.id, candidate.label, candidate.inputTokens, candidate.outputTokens, costEur, candidate.method, candidate.usedAt || fallbackDate);
+        const result = db.prepare(`INSERT INTO ai_usage_entries(project_id, model_id, account_id, setup_id, label, input_tokens, output_tokens, cost_eur, estimation_method, used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(input.projectId, setup.modelId, setup.accountId, setup.id, candidate.label, candidate.inputTokens, candidate.outputTokens, costEur, candidate.method, candidate.usedAt || input.usedAt || new Date().toISOString().slice(0, 10));
         entries.push(usageById(db, Number(result.lastInsertRowid)));
       }
       db.exec("COMMIT");
@@ -390,6 +419,18 @@ export function importAutomaticUsage(dbPath: string, userId: number, input: Auto
       entries,
     };
   } finally { db.close(); }
+}
+
+export function importConnectorUsage(dbPath: string, userId: number, input: ConnectorUsageImportInput): AutomaticUsageImportResult {
+  const sourceName = input.sourceName.trim() || `Connecteur ${input.connector}`;
+  const fallbackDate = input.usedAt?.trim() || new Date().toISOString().slice(0, 10);
+  return importParsedUsage(dbPath, userId, input, parseConnectorUsage(input.rawExport, input.connector, sourceName, fallbackDate));
+}
+
+export function importAutomaticUsage(dbPath: string, userId: number, input: AutomaticUsageImportInput): AutomaticUsageImportResult {
+  const sourceName = input.sourceName.trim() || "Import automatique";
+  const fallbackDate = input.usedAt?.trim() || new Date().toISOString().slice(0, 10);
+  return importParsedUsage(dbPath, userId, input, parseAutomaticUsage(input.rawExport, sourceName, fallbackDate));
 }
 
 function usageById(db: DatabaseSync, entryId: number): UsageEntry {

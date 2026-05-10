@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { DB_PATH, assignAiAccountToProject, createAiAccount, createProject, createUser, estimateProjectUsage, getUserById, importAutomaticUsage, listDashboardData, seedDefaultProviders, verifyUser } from "../lib/db";
+import { DB_PATH, assignAiAccountToProject, createAiAccount, createProject, createUser, estimateProjectUsage, getUserById, importConnectorUsage, listDashboardData, seedDefaultProviders, verifyUser } from "../lib/db";
 import { makeSession, readSession } from "../lib/session";
 
 export const dynamic = "force-dynamic";
@@ -103,7 +103,8 @@ async function importUsageAction(formData: FormData) {
   if (!userId) redirect("/");
   const projectId = Number(formData.get("projectId") || 0);
   try {
-    importAutomaticUsage(DB_PATH, userId, {
+    importConnectorUsage(DB_PATH, userId, {
+      connector: String(formData.get("connector") || "generic") as any,
       projectId,
       setupId: Number(formData.get("setupId") || 0),
       sourceName: String(formData.get("sourceName") || ""),
@@ -139,6 +140,14 @@ function modelPriceDetail(model: { inputPricePerMillion: number | null; outputPr
   return base;
 }
 function connectionLabel(value: string) { return value === "api" ? "API" : value === "local" ? "Local" : "Abonnement"; }
+const connectorOptions = [
+  ["generic", "Auto générique JSON/JSONL"],
+  ["openai", "OpenAI Responses/ChatCompletions"],
+  ["anthropic", "Anthropic Claude Messages"],
+  ["google", "Google Gemini usageMetadata"],
+  ["ollama", "Ollama local prompt_eval/eval"],
+  ["local", "Local JSONL générique coût 0 €"],
+];
 
 export default async function Home({ searchParams }: { searchParams?: Promise<{ error?: string; project?: string }> }) {
   seedDefaultProviders(DB_PATH);
@@ -160,7 +169,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
   ];
 
   return <main className="shell">
-    <section className="hero"><div><p className="eyebrow">Connecté : {user.email}</p><h1>TorquePilot AI Conso</h1><p className="subtitle">Phase 4B : collecte automatique réelle depuis exports/logs JSON, JSONL ou conversations collées, avec calcul tokens/coûts sans saisie manuelle.</p></div><form action={logoutAction}><button className="ghost">Déconnexion</button></form></section>
+    <section className="hero"><div><p className="eyebrow">Connecté : {user.email}</p><h1>TorquePilot AI Conso</h1><p className="subtitle">Phase 4C : connecteurs fournisseurs/local réels depuis exports JSON/JSONL/logs OpenAI, Anthropic, Gemini, Ollama et local, avec normalisation tokens/coûts.</p></div><form action={logoutAction}><button className="ghost">Déconnexion</button></form></section>
     {params?.error && <p className="alert">{params.error}</p>}
     <section className="grid stats">{stats.map(([label, value, hint]) => <article className="card" key={label}><span>{label}</span><strong>{value}</strong><small>{hint}</small></article>)}</section>
 
@@ -205,15 +214,16 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
     </section>
 
     <section className="layout usageLayout">
-      <article className="panel"><div className="sectionHeader"><div><p className="eyebrow">Collecte automatique Phase 4B</p><h2>Importer logs / exports réels</h2></div></div>
+      <article className="panel"><div className="sectionHeader"><div><p className="eyebrow">Collecte automatique Phase 4C</p><h2>Connecteurs fournisseur/local</h2></div></div>
         {selectedProject && data.projectAiSetups.length ? <form action={importUsageAction} className="usageForm">
           <input type="hidden" name="projectId" value={selectedProject.id} />
           <label>Configuration IA<select name="setupId" required>{data.projectAiSetups.map((s) => <option value={s.id} key={s.id}>{s.label} — {connectionLabel(s.connectionType)}</option>)}</select></label>
-          <label>Source<input name="sourceName" placeholder="Ex: OpenAI export, Claude JSONL, Ollama logs" defaultValue="Import automatique" /></label>
-          <label>Export JSON / JSONL / conversation<textarea name="rawExport" placeholder={'JSON accepté : {"usage":{"prompt_tokens":1200,"completion_tokens":350},"model":"..."}\nJSONL accepté : une requête par ligne\nTexte accepté : User: ... Assistant: ...'} rows={8} required></textarea></label>
+          <label>Connecteur réel<select name="connector" defaultValue="generic">{connectorOptions.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+          <label>Source fichier/log<input name="sourceName" placeholder="Ex: usage-openai-2026-05-09.jsonl, ollama.log" defaultValue="Import connecteur" /></label>
+          <label>Export JSON / JSONL / log local<textarea name="rawExport" placeholder={'OpenAI: {"id":"resp_...","created_at":1778323200,"usage":{"input_tokens":1200,"output_tokens":350}}\nAnthropic: {"id":"msg_...","usage":{"input_tokens":900,"output_tokens":240}}\nGemini: {"responseId":"...","usageMetadata":{"promptTokenCount":600,"candidatesTokenCount":250}}\nOllama: {"model":"llama3.1","prompt_eval_count":500,"eval_count":125}'} rows={9} required></textarea></label>
           <label>Date par défaut<input name="usedAt" type="date" defaultValue={new Date().toISOString().slice(0, 10)} /></label>
-          <button>Importer automatiquement</button>
-          <p className="muted">Aucune saisie manuelle de tokens/coûts : si les tokens existent dans l’export ils sont lus, sinon ils sont estimés depuis le texte, puis le coût est calculé avec le catalogue modèle.</p>
+          <button>Importer via connecteur</button>
+          <p className="muted">Sans clé API : on colle ou charge un export/log existant. Le connecteur normalise les champs fournisseur, calcule le coût API via le modèle affecté et force le coût à 0 € pour Ollama/local.</p>
         </form> : <p className="muted">Affecte d’abord un compte IA au projet.</p>}
       </article>
       <aside className="panel"><div className="sectionHeader"><div><p className="eyebrow">Fallback temporaire</p><h2>Conversation isolée</h2></div></div>
@@ -232,7 +242,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
 
     <section className="layout usageLayout">
       <article className="panel"><h2>Historique automatique</h2><div className="list">{data.usageEntries.length ? data.usageEntries.map((e) => <div className="row compact" key={e.id}><div><h3>{e.label}</h3><p>{e.providerName || "IA"} · {e.modelName || "Modèle"} · {e.usedAt}</p></div><span className="pill">{e.totalTokens.toLocaleString("fr-FR")} tok · {euro(e.costEur)}</span></div>) : <p className="muted">Aucun usage collecté pour ce projet.</p>}</div></article>
-      <aside className="panel"><h2>Formats acceptés</h2><ul className="tasks"><li><span>JSON</span><strong>OpenAI/Anthropic compatible</strong><small>usage.prompt_tokens, usage.completion_tokens, input_tokens, output_tokens</small></li><li><span>JSONL</span><strong>1 ligne = 1 requête</strong><small>import groupé avec total projet automatique</small></li><li><span>Texte</span><strong>User / Assistant</strong><small>fallback estimé depuis caractères quand l’export ne contient pas les tokens</small></li></ul></aside>
+      <aside className="panel"><h2>Formats connecteurs</h2><ul className="tasks"><li><span>OpenAI</span><strong>Responses / ChatCompletions</strong><small>usage.input_tokens/output_tokens, prompt_tokens/completion_tokens, created_at epoch</small></li><li><span>Anthropic</span><strong>Claude Messages</strong><small>usage.input_tokens, usage.output_tokens, id msg_*</small></li><li><span>Google</span><strong>Gemini usageMetadata</strong><small>promptTokenCount, candidatesTokenCount, responseId/createTime</small></li><li><span>Ollama/local</span><strong>Logs locaux coût 0 €</strong><small>prompt_eval_count, eval_count, model, JSONL ligne par ligne</small></li></ul></aside>
     </section>
   </main>;
 }
