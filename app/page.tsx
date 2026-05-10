@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { DB_PATH, USAGE_INBOX_DIR, USAGE_REPORTS_DIR, assignAiAccountToProject, createAiAccount, createProject, createUser, deleteAiAccount, deleteProjectAiSetup, deleteSavedUsageReport, estimateProjectUsage, getUsageCollectorHealth, getUserById, importConnectorUsage, importUsageInbox, listDashboardData, listSavedUsageReports, seedDefaultProviders, updateAiAccount, updateProjectAiSetup, verifyUser } from "../lib/db";
+import { DB_PATH, USAGE_INBOX_DIR, USAGE_REPORTS_DIR, assignAiAccountToProject, createAiAccount, createProject, createUser, deleteAiAccount, deleteProjectAiSetup, deleteSavedUsageReport, estimateProjectUsage, getUsageCollectorHealth, getUserById, importConnectorUsage, importUsageInbox, listDashboardData, listSavedUsageReports, previewUsageInbox, seedDefaultProviders, updateAiAccount, updateProjectAiSetup, verifyUser } from "../lib/db";
 import { makeSession, readSession } from "../lib/session";
 
 export const dynamic = "force-dynamic";
@@ -237,6 +237,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
   const selectedProjectId = params?.project ? Number(params.project) : undefined;
   const data = listDashboardData(DB_PATH, user.id, selectedProjectId);
   const collectorHealth = getUsageCollectorHealth(DB_PATH, user.id, USAGE_INBOX_DIR);
+  const collectorPreview = previewUsageInbox(USAGE_INBOX_DIR);
   const savedReports = listSavedUsageReports(USAGE_REPORTS_DIR);
   const selectedProject = data.selectedProject;
   const apiSetups = data.projectAiSetups.filter((s) => s.connectionType === "api");
@@ -306,10 +307,12 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
           <p className="muted">Sans clé API : on colle ou charge un export/log existant. Le connecteur normalise les champs fournisseur, calcule le coût API via le modèle affecté et force le coût à 0 € pour Ollama/local.</p>
         </form> : <p className="muted">Affecte d’abord un compte IA au projet.</p>}
       </article>
-      <aside className="panel"><div className="sectionHeader"><div><p className="eyebrow">Collecteur local Phase 4D</p><h2>Santé collecte</h2></div><span className="pill">{collectorHealth.pendingFiles ? "À traiter" : "OK"}</span></div>
-        <div className="grid stats"><article className="card"><span>Inbox</span><strong>{collectorHealth.pendingFiles}</strong><small>fichiers en attente</small></article><article className="card"><span>Processed</span><strong>{collectorHealth.processedFiles}</strong><small>archives conservées</small></article><article className="card"><span>Failed</span><strong>{collectorHealth.failedFiles}</strong><small>à corriger</small></article></div>
-        <p className="muted">Dossier surveillé : <code>{collectorHealth.rootDir}</code>. Déposer les fichiers dans <code>openai|anthropic|google|ollama|local|generic/inbox</code>. Rien n’est supprimé : succès vers processed, erreur vers failed.</p>
-        {selectedProject && data.projectAiSetups.length ? <form action={importInboxAction} className="inlineForm"><input type="hidden" name="projectId" value={selectedProject.id} /><select name="setupId" required>{data.projectAiSetups.map((s) => <option value={s.id} key={s.id}>{s.label}</option>)}</select><input name="usedAt" type="date" defaultValue={new Date().toISOString().slice(0, 10)} /><button>Importer dossier local</button></form> : <p className="muted">Affecte d’abord un compte IA au projet.</p>}
+      <aside className="panel"><div className="sectionHeader"><div><p className="eyebrow">Collecteur local Phase 4I</p><h2>Import guidé</h2></div><span className="pill">{collectorPreview.totals.readyFiles ? `${collectorPreview.totals.readyFiles} prêt(s)` : "OK"}</span></div>
+        <div className="grid stats"><article className="card"><span>Inbox</span><strong>{collectorHealth.pendingFiles}</strong><small>fichiers en attente</small></article><article className="card"><span>Détectés</span><strong>{collectorPreview.totals.detectedCount}</strong><small>{collectorPreview.totals.totalTokens.toLocaleString("fr-FR")} tokens</small></article><article className="card"><span>Erreurs</span><strong>{collectorPreview.totals.failedFiles}</strong><small>avant import</small></article></div>
+        <p className="muted">Dépose tes fichiers dans <code>{collectorHealth.rootDir}</code>, sous <code>openai|anthropic|google|ollama|local|generic/inbox</code>. L’aperçu lit sans déplacer ; l’import archive ensuite vers processed/failed.</p>
+        <details className="row compact"><summary><div><h3>Dossiers acceptés</h3><p>{collectorPreview.folders.join(" · ")}</p></div><span className="pill">JSON/JSONL/log/txt</span></summary><p className="muted">Aucune clé API demandée : uniquement fichiers ou logs locaux déjà présents sur le Lenovo.</p></details>
+        <div className="list">{collectorPreview.files.length ? collectorPreview.files.map((file) => <div className="row compact" key={file.sourcePath}><div><h3>{file.connector} · {file.fileName}</h3><p>{file.status === "ready" ? `${file.detectedCount} ligne(s) · ${file.totalTokens.toLocaleString("fr-FR")} tok · ${fileSize(file.sizeBytes)}` : file.errorMessage}</p>{file.sampleLabels.length ? <small>{file.sampleLabels.join(" · ")}</small> : null}</div><span className="pill">{file.status === "ready" ? "Prêt" : "À corriger"}</span></div>) : <p className="muted">Aucun fichier dans inbox pour l’instant.</p>}</div>
+        {selectedProject && data.projectAiSetups.length ? <form action={importInboxAction} className="inlineForm"><input type="hidden" name="projectId" value={selectedProject.id} /><select name="setupId" required>{data.projectAiSetups.map((s) => <option value={s.id} key={s.id}>{s.label}</option>)}</select><input name="usedAt" type="date" defaultValue={new Date().toISOString().slice(0, 10)} /><button>Importer fichiers prêts</button></form> : <p className="muted">Affecte d’abord un compte IA au projet.</p>}
         <div className="list">{collectorHealth.recentRuns.length ? collectorHealth.recentRuns.map((run) => <div className="row compact" key={run.id}><div><h3>{run.connector} · {run.status === "success" ? "OK" : "Erreur"}</h3><p>{run.sourcePath}</p>{run.errorMessage && <p className="alert">{run.errorMessage}</p>}</div><span className="pill">{run.importedCount} lignes</span></div>) : <p className="muted">Aucun run d’import dossier pour l’instant.</p>}</div>
       </aside>
     </section>

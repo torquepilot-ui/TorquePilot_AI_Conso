@@ -75,6 +75,8 @@ export type UsageInboxImportInput = { rootDir: string; projectId: number; setupI
 export type UsageImportRun = { id: number; userId: number; projectId: number; setupId: number; connector: UsageConnector; sourcePath: string; status: "success" | "failed"; importedCount: number; errorMessage: string | null; createdAt: string };
 export type UsageInboxImportResult = AutomaticUsageImportResult & { processedFiles: number; failedFiles: number; runs: UsageImportRun[] };
 export type UsageCollectorHealth = { rootDir: string; pendingFiles: number; processedFiles: number; failedFiles: number; lastRun: UsageImportRun | null; recentRuns: UsageImportRun[] };
+export type UsageInboxPreviewFile = { connector: UsageConnector; fileName: string; sourcePath: string; sizeBytes: number; status: "ready" | "failed"; detectedCount: number; inputTokens: number; outputTokens: number; totalTokens: number; sampleLabels: string[]; errorMessage: string | null };
+export type UsageInboxPreview = { rootDir: string; folders: string[]; files: UsageInboxPreviewFile[]; totals: { files: number; readyFiles: number; failedFiles: number; detectedCount: number; inputTokens: number; outputTokens: number; totalTokens: number } };
 export type UsageReportFormat = "csv" | "json";
 export type UsageReport = { projectId: number; projectName: string; generatedAt: string; format: UsageReportFormat; mimeType: string; fileName: string; totals: { entries: number; inputTokens: number; outputTokens: number; totalTokens: number; costEur: number }; entries: UsageEntry[]; content: string };
 export type SavedUsageReport = UsageReport & { filePath: string };
@@ -550,6 +552,36 @@ function listInboxFiles(rootDir: string) {
     }
   }
   return files;
+}
+
+export function previewUsageInbox(rootDir: string, usedAt?: string): UsageInboxPreview {
+  const fallbackDate = usedAt?.trim() || new Date().toISOString().slice(0, 10);
+  const files = listInboxFiles(rootDir).map((file) => {
+    const fileName = basename(file.path);
+    try {
+      const rawExport = readFileSync(file.path, "utf8");
+      const candidates = parseConnectorUsage(rawExport, file.connector, fileName, fallbackDate);
+      const inputTokens = candidates.reduce((sum, candidate) => sum + candidate.inputTokens, 0);
+      const outputTokens = candidates.reduce((sum, candidate) => sum + candidate.outputTokens, 0);
+      return { connector: file.connector, fileName, sourcePath: file.path, sizeBytes: statSync(file.path).size, status: candidates.length ? "ready" as const : "failed" as const, detectedCount: candidates.length, inputTokens, outputTokens, totalTokens: inputTokens + outputTokens, sampleLabels: candidates.slice(0, 3).map((candidate) => candidate.label), errorMessage: candidates.length ? null : "Aucun usage importable détecté" };
+    } catch (error) {
+      return { connector: file.connector, fileName, sourcePath: file.path, sizeBytes: existsSync(file.path) ? statSync(file.path).size : 0, status: "failed" as const, detectedCount: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, sampleLabels: [], errorMessage: error instanceof Error ? error.message : "Aperçu refusé" };
+    }
+  });
+  return {
+    rootDir,
+    folders: inboxConnectors.map((connector) => `${connector}/inbox`),
+    files,
+    totals: {
+      files: files.length,
+      readyFiles: files.filter((file) => file.status === "ready").length,
+      failedFiles: files.filter((file) => file.status === "failed").length,
+      detectedCount: files.reduce((sum, file) => sum + file.detectedCount, 0),
+      inputTokens: files.reduce((sum, file) => sum + file.inputTokens, 0),
+      outputTokens: files.reduce((sum, file) => sum + file.outputTokens, 0),
+      totalTokens: files.reduce((sum, file) => sum + file.totalTokens, 0),
+    },
+  };
 }
 function countFiles(rootDir: string, folder: "inbox" | "processed" | "failed") {
   ensureUsageInbox(rootDir);

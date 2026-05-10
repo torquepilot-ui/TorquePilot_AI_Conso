@@ -23,6 +23,7 @@ import {
   importAutomaticUsage,
   importConnectorUsage,
   importUsageInbox,
+  previewUsageInbox,
   getUsageCollectorHealth,
   buildUsageReport,
   saveUsageReportFile,
@@ -398,6 +399,50 @@ test("Phase 4C : connecteurs Anthropic, Gemini et Ollama normalisent les logs lo
     assert.equal(listDashboardData(dbPath, user.id, project.id).usageEntries.length, 3);
   } finally {
     cleanup();
+  }
+});
+
+test("Phase 4I : aperçu guidé inbox détecte fichiers prêts sans les déplacer", () => {
+  const { dbPath, cleanup } = tempDb();
+  const inboxRoot = mkdtempSync(join(tmpdir(), "tp-usage-inbox-preview-"));
+  try {
+    initDb(dbPath);
+    seedDefaultProviders(dbPath);
+    const user = createUser(dbPath, "rudy@example.local", "secret-test");
+    const project = createProject(dbPath, user.id, "TorquePilot", "RAG mécanique");
+    const data = listDashboardData(dbPath, user.id);
+    const openai = data.providers.find((p) => p.name === "OpenAI")!;
+    const gpt = data.models.find((m) => m.name === "GPT-4.1")!;
+    const account = createAiAccount(dbPath, user.id, { providerId: openai.id, name: "OpenAI API", connectionType: "api" });
+    const setup = assignAiAccountToProject(dbPath, user.id, { projectId: project.id, accountId: account.id, modelId: gpt.id, connectionType: "api" });
+    const openaiInbox = join(inboxRoot, "openai", "inbox");
+    const localInbox = join(inboxRoot, "local", "inbox");
+    mkdirSync(openaiInbox, { recursive: true });
+    mkdirSync(localInbox, { recursive: true });
+    const okFile = join(openaiInbox, "usage-openai.jsonl");
+    const badFile = join(localInbox, "empty.log");
+    writeFileSync(okFile, JSON.stringify({ id: "resp_phase4i", created_at: 1778323200, usage: { input_tokens: 1200, output_tokens: 300 } }));
+    writeFileSync(badFile, "");
+
+    const preview = previewUsageInbox(inboxRoot, "2026-05-10");
+
+    assert.equal(preview.totals.files, 2);
+    assert.equal(preview.totals.readyFiles, 1);
+    assert.equal(preview.totals.failedFiles, 1);
+    assert.equal(preview.totals.detectedCount, 1);
+    assert.equal(preview.totals.inputTokens, 1200);
+    assert.equal(preview.totals.outputTokens, 300);
+    assert.equal(preview.files.find((file) => file.fileName === "usage-openai.jsonl")?.status, "ready");
+    assert.match(preview.files.find((file) => file.fileName === "empty.log")?.errorMessage || "", /Aucun usage importable/);
+    assert.equal(existsSync(okFile), true);
+    assert.equal(existsSync(badFile), true);
+
+    const result = importUsageInbox(dbPath, user.id, { rootDir: inboxRoot, projectId: project.id, setupId: setup.id });
+    assert.equal(result.processedFiles, 1);
+    assert.equal(result.failedFiles, 1);
+  } finally {
+    cleanup();
+    rmSync(inboxRoot, { recursive: true, force: true });
   }
 });
 
