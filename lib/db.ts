@@ -264,7 +264,11 @@ export function updateProject(dbPath: string, userId: number, projectId: number,
   } finally { db.close(); }
 }
 
+const _seededPaths = new Set<string>();
+
 export function seedDefaultProviders(dbPath = defaultDbPath) {
+  if (_seededPaths.has(dbPath)) return;
+  _seededPaths.add(dbPath);
   initDb(dbPath); const db = open(dbPath);
   try {
     for (const model of MODEL_CATALOG) {
@@ -756,26 +760,28 @@ function withMaxRatio<T extends { totalTokens: number }>(rows: T[]) {
   const maxTokens = Math.max(0, ...rows.map((row) => row.totalTokens));
   return rows.map((row) => ({ ...row, maxRatio: maxTokens > 0 ? row.totalTokens / maxTokens : 0 }));
 }
+function _buildUsageChartData(db: DatabaseSync, userId: number, projectId: number): UsageChartData {
+  const project = db.prepare(`SELECT p.id, p.name FROM projects p JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ? WHERE p.id = ?`).get(userId, projectId) as any;
+  if (!project) throw new Error("Accès projet refusé");
+  const totalsRow = db.prepare(`SELECT count(*) as entries, coalesce(sum(input_tokens),0) as inputTokens, coalesce(sum(output_tokens),0) as outputTokens, coalesce(sum(input_tokens + output_tokens),0) as totalTokens, coalesce(sum(cost_eur),0) as costEur FROM ai_usage_entries WHERE project_id = ?`).get(projectId) as any;
+  const dailyRows = db.prepare(`SELECT substr(used_at,1,10) as date, count(*) as entries, coalesce(sum(input_tokens),0) as inputTokens, coalesce(sum(output_tokens),0) as outputTokens, coalesce(sum(input_tokens + output_tokens),0) as totalTokens, coalesce(sum(cost_eur),0) as costEur FROM ai_usage_entries WHERE project_id = ? GROUP BY substr(used_at,1,10) ORDER BY date ASC`).all(projectId) as any[];
+  const providerRows = db.prepare(`SELECT coalesce(pr.name,'IA') as name, count(*) as entries, coalesce(sum(e.input_tokens),0) as inputTokens, coalesce(sum(e.output_tokens),0) as outputTokens, coalesce(sum(e.input_tokens + e.output_tokens),0) as totalTokens, coalesce(sum(e.cost_eur),0) as costEur FROM ai_usage_entries e LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE e.project_id = ? GROUP BY coalesce(pr.name,'IA') ORDER BY totalTokens DESC, name ASC LIMIT 5`).all(projectId) as any[];
+  const modelRows = db.prepare(`SELECT coalesce(m.name,'Modèle') as name, count(*) as entries, coalesce(sum(e.input_tokens),0) as inputTokens, coalesce(sum(e.output_tokens),0) as outputTokens, coalesce(sum(e.input_tokens + e.output_tokens),0) as totalTokens, coalesce(sum(e.cost_eur),0) as costEur FROM ai_usage_entries e LEFT JOIN ai_models m ON m.id = e.model_id WHERE e.project_id = ? GROUP BY coalesce(m.name,'Modèle') ORDER BY totalTokens DESC, name ASC LIMIT 5`).all(projectId) as any[];
+  const normalize = (row: any) => ({ name: String(row.name), inputTokens: Number(row.inputTokens ?? 0), outputTokens: Number(row.outputTokens ?? 0), totalTokens: Number(row.totalTokens ?? 0), costEur: toNonNegativeMoney(Number(row.costEur ?? 0)), entries: Number(row.entries ?? 0) });
+  const normalizeDaily = (row: any) => ({ date: String(row.date), inputTokens: Number(row.inputTokens ?? 0), outputTokens: Number(row.outputTokens ?? 0), totalTokens: Number(row.totalTokens ?? 0), costEur: toNonNegativeMoney(Number(row.costEur ?? 0)), entries: Number(row.entries ?? 0) });
+  return {
+    projectId: Number(project.id),
+    projectName: String(project.name),
+    totals: { entries: Number(totalsRow.entries ?? 0), inputTokens: Number(totalsRow.inputTokens ?? 0), outputTokens: Number(totalsRow.outputTokens ?? 0), totalTokens: Number(totalsRow.totalTokens ?? 0), costEur: toNonNegativeMoney(Number(totalsRow.costEur ?? 0)) },
+    daily: withMaxRatio(dailyRows.map(normalizeDaily)),
+    topProviders: withMaxRatio(providerRows.map(normalize)),
+    topModels: withMaxRatio(modelRows.map(normalize)),
+  };
+}
+
 export function buildUsageChartData(dbPath: string, userId: number, projectId: number): UsageChartData {
   initDb(dbPath); const db = open(dbPath);
-  try {
-    const project = db.prepare(`SELECT p.id, p.name FROM projects p JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ? WHERE p.id = ?`).get(userId, projectId) as any;
-    if (!project) throw new Error("Accès projet refusé");
-    const totalsRow = db.prepare(`SELECT count(*) as entries, coalesce(sum(input_tokens),0) as inputTokens, coalesce(sum(output_tokens),0) as outputTokens, coalesce(sum(input_tokens + output_tokens),0) as totalTokens, coalesce(sum(cost_eur),0) as costEur FROM ai_usage_entries WHERE project_id = ?`).get(projectId) as any;
-    const dailyRows = db.prepare(`SELECT substr(used_at,1,10) as date, count(*) as entries, coalesce(sum(input_tokens),0) as inputTokens, coalesce(sum(output_tokens),0) as outputTokens, coalesce(sum(input_tokens + output_tokens),0) as totalTokens, coalesce(sum(cost_eur),0) as costEur FROM ai_usage_entries WHERE project_id = ? GROUP BY substr(used_at,1,10) ORDER BY date ASC`).all(projectId) as any[];
-    const providerRows = db.prepare(`SELECT coalesce(pr.name,'IA') as name, count(*) as entries, coalesce(sum(e.input_tokens),0) as inputTokens, coalesce(sum(e.output_tokens),0) as outputTokens, coalesce(sum(e.input_tokens + e.output_tokens),0) as totalTokens, coalesce(sum(e.cost_eur),0) as costEur FROM ai_usage_entries e LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE e.project_id = ? GROUP BY coalesce(pr.name,'IA') ORDER BY totalTokens DESC, name ASC LIMIT 5`).all(projectId) as any[];
-    const modelRows = db.prepare(`SELECT coalesce(m.name,'Modèle') as name, count(*) as entries, coalesce(sum(e.input_tokens),0) as inputTokens, coalesce(sum(e.output_tokens),0) as outputTokens, coalesce(sum(e.input_tokens + e.output_tokens),0) as totalTokens, coalesce(sum(e.cost_eur),0) as costEur FROM ai_usage_entries e LEFT JOIN ai_models m ON m.id = e.model_id WHERE e.project_id = ? GROUP BY coalesce(m.name,'Modèle') ORDER BY totalTokens DESC, name ASC LIMIT 5`).all(projectId) as any[];
-    const normalize = (row: any) => ({ name: String(row.name), inputTokens: Number(row.inputTokens ?? 0), outputTokens: Number(row.outputTokens ?? 0), totalTokens: Number(row.totalTokens ?? 0), costEur: toNonNegativeMoney(Number(row.costEur ?? 0)), entries: Number(row.entries ?? 0) });
-    const normalizeDaily = (row: any) => ({ date: String(row.date), inputTokens: Number(row.inputTokens ?? 0), outputTokens: Number(row.outputTokens ?? 0), totalTokens: Number(row.totalTokens ?? 0), costEur: toNonNegativeMoney(Number(row.costEur ?? 0)), entries: Number(row.entries ?? 0) });
-    return {
-      projectId: Number(project.id),
-      projectName: String(project.name),
-      totals: { entries: Number(totalsRow.entries ?? 0), inputTokens: Number(totalsRow.inputTokens ?? 0), outputTokens: Number(totalsRow.outputTokens ?? 0), totalTokens: Number(totalsRow.totalTokens ?? 0), costEur: toNonNegativeMoney(Number(totalsRow.costEur ?? 0)) },
-      daily: withMaxRatio(dailyRows.map(normalizeDaily)),
-      topProviders: withMaxRatio(providerRows.map(normalize)),
-      topModels: withMaxRatio(modelRows.map(normalize)),
-    };
-  } finally { db.close(); }
+  try { return _buildUsageChartData(db, userId, projectId); } finally { db.close(); }
 }
 
 export function listDashboardData(dbPath: string, userId: number, selectedProjectId?: number) {
@@ -791,7 +797,7 @@ export function listDashboardData(dbPath: string, userId: number, selectedProjec
   const projectUsage = selectedProject ? db.prepare(`SELECT coalesce(sum(input_tokens + output_tokens),0) as tokens, coalesce(sum(cost_eur),0) as cost FROM ai_usage_entries WHERE project_id = ?`).get(selectedProject.id) as any : { tokens: 0, cost: 0 };
   const subscriptionMonthly = projectAiSetups.reduce((sum, setup) => sum + (setup.connectionType === "subscription" ? setup.monthlyCostEur : 0), 0);
   const usageEntries = db.prepare(`SELECT e.id, e.project_id as projectId, p.name as projectName, e.model_id as modelId, m.name as modelName, pr.name as providerName, e.label, e.input_tokens as inputTokens, e.output_tokens as outputTokens, e.cost_eur as costEur, e.used_at as usedAt FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id JOIN project_members pm ON pm.project_id = e.project_id AND pm.user_id = ? LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE (? IS NULL OR e.project_id = ?) ORDER BY e.used_at DESC, e.id DESC LIMIT 30`).all(userId, selectedProject?.id ?? null, selectedProject?.id ?? null).map(rowToEntry);
-  const usageCharts = selectedProject ? buildUsageChartData(dbPath, userId, selectedProject.id) : null;
+  const usageCharts = selectedProject ? _buildUsageChartData(db, userId, selectedProject.id) : null;
   db.close();
   return { projects, providers, models, aiAccounts, projectAiSetups, selectedProject, usageEntries, usageCharts, usage: { tokens: Number(usage.tokens), cost: toNonNegativeMoney(Number(usage.cost)) }, projectUsage: { tokens: Number(projectUsage.tokens), cost: toNonNegativeMoney(Number(projectUsage.cost)), subscriptionMonthly } };
 }

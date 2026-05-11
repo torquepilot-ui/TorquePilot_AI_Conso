@@ -1,6 +1,10 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-const secret = process.env.SESSION_SECRET || "torquepilot-local-dev-secret-change-later";
+if (process.env.NODE_ENV === "production" && !process.env.SESSION_SECRET) {
+  throw new Error("[FATAL] SESSION_SECRET est absent en production — définir cette variable d'environnement avant de démarrer le serveur");
+}
+
+const secret = process.env.SESSION_SECRET ?? "torquepilot-local-dev-secret-change-later";
 
 function sign(value: string) {
   return createHmac("sha256", secret).update(value).digest("hex");
