@@ -41,7 +41,7 @@ const connectorOptions = [
   ["local", "Local JSONL générique coût 0 €"],
 ];
 
-export default async function Home({ searchParams }: { searchParams?: Promise<{ error?: string; project?: string }> }) {
+export default async function Home({ searchParams }: { searchParams?: Promise<{ error?: string; project?: string; page?: string }> }) {
   seedDefaultProviders(DB_PATH);
   const params = await searchParams;
   const userId = await currentUserId();
@@ -49,7 +49,8 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
   if (!user) return <AuthScreen error={params?.error} />;
 
   const selectedProjectId = params?.project ? Number(params.project) : undefined;
-  const data = listDashboardData(DB_PATH, user.id, selectedProjectId);
+  const page = params?.page ? Math.max(1, Number(params.page)) : 1;
+  const data = listDashboardData(DB_PATH, user.id, selectedProjectId, page);
   const collectorHealth = getUsageCollectorHealth(DB_PATH, user.id, USAGE_INBOX_DIR);
   const collectorPreview = previewUsageInbox(USAGE_INBOX_DIR);
   const savedReports = listSavedUsageReports(USAGE_REPORTS_DIR);
@@ -160,7 +161,18 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
     </section>
 
     <section className="layout usageLayout">
-      <article className="panel"><div className="sectionHeader"><div><p className="eyebrow">Rapport de consommation</p><h2>Historique automatique</h2></div>{selectedProject && <div className="reportActions"><a className="buttonLink" href={`/reports/usage?project=${selectedProject.id}&format=csv`}>Télécharger CSV</a><a className="buttonLink ghostLink" href={`/reports/usage?project=${selectedProject.id}&format=json`}>Sauvegarder JSON</a></div>}</div><p className="muted">Les boutons génèrent un rapport tokens depuis SQLite, le téléchargent et en conservent une copie serveur dans <code>data/usage-reports</code>.</p><div className="list">{data.usageEntries.length ? data.usageEntries.map((e) => <div className="row compact" key={e.id}><div><h3>{e.label}</h3><p>{e.providerName || "IA"} · {e.modelName || "Modèle"} · {e.usedAt}</p></div><span className="pill">{e.totalTokens.toLocaleString("fr-FR")} tok · {euro(e.costEur)}</span></div>) : <p className="muted">Aucun usage collecté pour ce projet.</p>}</div></article>
+      <article className="panel">
+        <div className="sectionHeader"><div><p className="eyebrow">Rapport de consommation</p><h2>Historique automatique</h2></div>{selectedProject && <div className="reportActions"><a className="buttonLink" href={`/reports/usage?project=${selectedProject.id}&format=csv`}>Télécharger CSV</a><a className="buttonLink ghostLink" href={`/reports/usage?project=${selectedProject.id}&format=json`}>Sauvegarder JSON</a></div>}</div>
+        <p className="muted">Les boutons génèrent un rapport tokens depuis SQLite, le téléchargent et en conservent une copie serveur dans <code>data/usage-reports</code>.</p>
+        <div className="list">{data.usageEntries.length ? data.usageEntries.map((e) => <div className="row compact" key={e.id}><div><h3>{e.label}</h3><p>{e.providerName || "IA"} · {e.modelName || "Modèle"} · {e.usedAt}</p></div><span className="pill">{e.totalTokens.toLocaleString("fr-FR")} tok · {euro(e.costEur)}</span></div>) : <p className="muted">Aucun usage collecté pour ce projet.</p>}</div>
+        {data.totalUsageEntries > data.usagePageSize && (() => {
+          const totalPages = Math.ceil(data.totalUsageEntries / data.usagePageSize);
+          const base = selectedProject ? `/?project=${selectedProject.id}` : "/";
+          const prevHref = data.usagePage > 1 ? `${base}&page=${data.usagePage - 1}` : null;
+          const nextHref = data.usagePage < totalPages ? `${base}&page=${data.usagePage + 1}` : null;
+          return <div className="pagination"><span className="muted">Page {data.usagePage}/{totalPages} · {data.totalUsageEntries} entrées</span><div className="paginationLinks">{prevHref ? <a className="buttonLink ghostLink" href={prevHref}>← Précédent</a> : null}{nextHref ? <a className="buttonLink ghostLink" href={nextHref}>Suivant →</a> : null}</div></div>;
+        })()}
+      </article>
       <aside className="panel"><div className="sectionHeader"><div><p className="eyebrow">Phase 4G</p><h2>Rapports sauvegardés</h2></div><span className="pill">{savedReports.length}</span></div><p className="muted">Retrouve les exports déjà générés, avec téléchargement direct et suppression côté serveur.</p><div className="list">{savedReports.length ? savedReports.map((report) => <div className="row compact reportRow" key={report.fileName}><div><h3>{report.format.toUpperCase()} · {fileSize(report.sizeBytes)}</h3><p>{shortDate(report.createdAt)}</p><small>{report.fileName}</small></div><div className="reportActions reportRowActions"><a className="buttonLink ghostLink" href={`/reports/saved?file=${encodeURIComponent(report.fileName)}`}>Télécharger</a><form action={deleteSavedReportAction}><input type="hidden" name="projectId" value={selectedProject?.id ?? ""} /><input type="hidden" name="fileName" value={report.fileName} /><button className="danger">Supprimer</button></form></div></div>) : <p className="muted">Aucun rapport sauvegardé. Génère d’abord un CSV ou JSON.</p>}</div></aside>
     </section>
 

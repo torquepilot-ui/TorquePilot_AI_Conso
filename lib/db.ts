@@ -86,6 +86,35 @@ export type UsageChartPoint = { date: string; inputTokens: number; outputTokens:
 export type UsageChartBreakdown = { name: string; inputTokens: number; outputTokens: number; totalTokens: number; costEur: number; entries: number; maxRatio: number };
 export type UsageChartData = { projectId: number; projectName: string; totals: { entries: number; inputTokens: number; outputTokens: number; totalTokens: number; costEur: number }; daily: UsageChartPoint[]; topProviders: UsageChartBreakdown[]; topModels: UsageChartBreakdown[] };
 
+// Private raw SQLite row types — never exported
+type PragmaInfoRow = { name: string };
+type RawUserRow = { id: number; email: string; password_hash: string };
+type RawProviderIdRow = { id: number };
+type RawModelPriceRow = { input_price_per_million: number | null; output_price_per_million: number | null };
+type RawAccountDbRow = { id: number; user_id: number; provider_id: number | null; name: string; connection_type: string; subscription_name: string | null; monthly_cost_eur: number; notes: string | null };
+type RawSetupProjectRow = { projectId: number };
+type RawEntryRow = { id: number; projectId: number; projectName: string; modelId: number | null; modelName: string | null; providerName: string | null; label: string; inputTokens: number; outputTokens: number; costEur: number; usedAt: string };
+type RawAccountRow = { id: number; userId: number; providerId: number | null; providerName: string | null; name: string; connectionType: string; subscriptionName: string | null; monthlyCostEur: number; notes: string | null };
+type RawSetupRow = { id: number; projectId: number; projectName: string; accountId: number; accountName: string; providerName: string | null; modelId: number | null; modelName: string | null; connectionType: string; subscriptionName: string | null; monthlyCostEur: number; inputPricePerMillion: number | null; outputPricePerMillion: number | null; label: string };
+type RawRunRow = { id: number; userId: number; projectId: number; setupId: number; connector: string; sourcePath: string; status: string; importedCount: number; errorMessage: string | null; createdAt: string };
+type RawProjectRow = { id: number; name: string };
+type RawTotalsRow = { entries: number; inputTokens: number; outputTokens: number; totalTokens: number; costEur: number };
+type RawChartRow = { date: string; entries: number; inputTokens: number; outputTokens: number; totalTokens: number; costEur: number };
+type RawBreakdownRow = { name: string; entries: number; inputTokens: number; outputTokens: number; totalTokens: number; costEur: number };
+type RawUsageSumRow = { tokens: number; cost: number };
+
+// Chars-per-token ratios by provider family for text estimation
+const TOKEN_CHARS_BY_PROVIDER: Record<string, number> = {
+  Claude: 3.8,
+  OpenAI: 4.0,
+  Gemini: 3.5,
+  Mistral: 3.8,
+  DeepSeek: 3.5,
+  Grok: 4.0,
+  "Z.ai": 3.5,
+  OpenRouter: 4.0,
+};
+
 const defaultDbPath = join(process.cwd(), "data", "torquepilot.sqlite");
 const defaultUsageInboxDir = join(process.cwd(), "data", "usage-inbox");
 const defaultUsageReportsDir = join(process.cwd(), "data", "usage-reports");
@@ -96,7 +125,7 @@ function open(dbPath = defaultDbPath) {
 }
 
 function columnExists(db: DatabaseSync, table: string, column: string) {
-  return (db.prepare(`PRAGMA table_info(${table})`).all() as any[]).some((row) => row.name === column);
+  return (db.prepare(`PRAGMA table_info(${table})`).all() as PragmaInfoRow[]).some((row) => row.name === column);
 }
 
 function migrate(db: DatabaseSync) {
@@ -203,16 +232,21 @@ function toNonNegativeInteger(value: number) { const n = Number(value); return !
 function toNonNegativeMoney(value: number) { const n = Number(value); return !Number.isFinite(n) || n < 0 ? 0 : Math.round(n * 1000000) / 1000000; }
 function toNullableMoney(value: unknown) { const n = Number(value); return Number.isFinite(n) && n >= 0 ? Math.round(n * 1000000) / 1000000 : null; }
 function normalizeConnectionType(value: string | undefined): ConnectionType { return value === "api" || value === "local" ? value : "subscription"; }
-export function estimateTokensFromText(text: string) { const clean = text.trim(); return clean ? Math.max(1, Math.ceil(clean.length / 4)) : 0; }
+export function estimateTokensFromText(text: string, providerName?: string | null) {
+  const clean = text.trim();
+  if (!clean) return 0;
+  const charsPerToken = (providerName ? TOKEN_CHARS_BY_PROVIDER[providerName] : undefined) ?? 4.0;
+  return Math.max(1, Math.ceil(clean.length / charsPerToken));
+}
 
-function rowToEntry(row: any): UsageEntry {
+function rowToEntry(row: RawEntryRow): UsageEntry {
   const inputTokens = Number(row.inputTokens ?? 0); const outputTokens = Number(row.outputTokens ?? 0);
   return { id: Number(row.id), projectId: Number(row.projectId), projectName: String(row.projectName), modelId: row.modelId == null ? null : Number(row.modelId), modelName: row.modelName == null ? null : String(row.modelName), providerName: row.providerName == null ? null : String(row.providerName), label: String(row.label), inputTokens, outputTokens, totalTokens: inputTokens + outputTokens, costEur: Number(row.costEur ?? 0), usedAt: String(row.usedAt) };
 }
-function rowToAccount(row: any): AiAccount {
+function rowToAccount(row: RawAccountRow): AiAccount {
   return { id: Number(row.id), userId: Number(row.userId), providerId: row.providerId == null ? null : Number(row.providerId), providerName: row.providerName == null ? null : String(row.providerName), name: String(row.name), connectionType: normalizeConnectionType(row.connectionType), subscriptionName: row.subscriptionName == null ? null : String(row.subscriptionName), monthlyCostEur: Number(row.monthlyCostEur ?? 0), notes: row.notes == null ? null : String(row.notes) };
 }
-function rowToSetup(row: any): ProjectAiSetup {
+function rowToSetup(row: RawSetupRow): ProjectAiSetup {
   return { id: Number(row.id), projectId: Number(row.projectId), projectName: String(row.projectName), accountId: Number(row.accountId), accountName: String(row.accountName), providerName: row.providerName == null ? null : String(row.providerName), modelId: row.modelId == null ? null : Number(row.modelId), modelName: row.modelName == null ? null : String(row.modelName), connectionType: normalizeConnectionType(row.connectionType), subscriptionName: row.subscriptionName == null ? null : String(row.subscriptionName), monthlyCostEur: Number(row.monthlyCostEur ?? 0), inputPricePerMillion: row.inputPricePerMillion == null ? null : Number(row.inputPricePerMillion), outputPricePerMillion: row.outputPricePerMillion == null ? null : Number(row.outputPricePerMillion), label: String(row.label) };
 }
 
@@ -222,11 +256,11 @@ export function createUser(dbPath: string, email: string, password: string): Use
   db.close(); return { id: Number(result.lastInsertRowid), email: normalized, passwordHash };
 }
 export function verifyUser(dbPath: string, email: string, password: string): User | null {
-  initDb(dbPath); const db = open(dbPath); const row = db.prepare("SELECT id, email, password_hash FROM users WHERE email = ?").get(email.trim().toLowerCase()) as any; db.close();
+  initDb(dbPath); const db = open(dbPath); const row = db.prepare("SELECT id, email, password_hash FROM users WHERE email = ?").get(email.trim().toLowerCase()) as RawUserRow | undefined; db.close();
   return row && checkPassword(password, row.password_hash) ? { id: row.id, email: row.email, passwordHash: row.password_hash } : null;
 }
 export function getUserById(dbPath: string, userId: number): User | null {
-  initDb(dbPath); const db = open(dbPath); const row = db.prepare("SELECT id, email, password_hash FROM users WHERE id = ?").get(userId) as any; db.close();
+  initDb(dbPath); const db = open(dbPath); const row = db.prepare("SELECT id, email, password_hash FROM users WHERE id = ?").get(userId) as RawUserRow | undefined; db.close();
   return row ? { id: row.id, email: row.email, passwordHash: row.password_hash } : null;
 }
 export function createProject(dbPath: string, userId: number, name: string, description = ""): Project {
@@ -273,7 +307,7 @@ export function seedDefaultProviders(dbPath = defaultDbPath) {
   try {
     for (const model of MODEL_CATALOG) {
       db.prepare("INSERT OR IGNORE INTO ai_providers(name, kind) VALUES (?, 'catalog')").run(model.providerName);
-      const providerRow = db.prepare("SELECT id FROM ai_providers WHERE name = ?").get(model.providerName) as any;
+      const providerRow = db.prepare("SELECT id FROM ai_providers WHERE name = ?").get(model.providerName) as RawProviderIdRow;
       db.prepare(`INSERT OR IGNORE INTO ai_models(provider_id, name, api_model_id, category, input_price_per_million, output_price_per_million, image_price, pricing_unit, description, source)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(providerRow.id, model.name, model.apiModelId, model.category, model.inputPricePerMillion, model.outputPricePerMillion, model.imagePrice, model.pricingUnit, model.description, model.source);
@@ -301,14 +335,14 @@ export function createAiAccount(dbPath: string, userId: number, input: AiAccount
     if (providerId && !db.prepare("SELECT 1 FROM ai_providers WHERE id = ?").get(providerId)) throw new Error("Fournisseur IA inconnu");
     const result = db.prepare(`INSERT INTO ai_accounts(user_id, provider_id, name, connection_type, subscription_name, monthly_cost_eur, notes) VALUES (?, ?, ?, ?, ?, ?, ?)`)
       .run(userId, providerId, name, connectionType, input.subscriptionName?.trim() || null, toNonNegativeMoney(input.monthlyCostEur ?? 0), input.notes?.trim() || null);
-    return rowToAccount(db.prepare(`SELECT a.id, a.user_id as userId, a.provider_id as providerId, p.name as providerName, a.name, a.connection_type as connectionType, a.subscription_name as subscriptionName, a.monthly_cost_eur as monthlyCostEur, a.notes FROM ai_accounts a LEFT JOIN ai_providers p ON p.id = a.provider_id WHERE a.id = ?`).get(Number(result.lastInsertRowid)) as any);
+    return rowToAccount(db.prepare(`SELECT a.id, a.user_id as userId, a.provider_id as providerId, p.name as providerName, a.name, a.connection_type as connectionType, a.subscription_name as subscriptionName, a.monthly_cost_eur as monthlyCostEur, a.notes FROM ai_accounts a LEFT JOIN ai_providers p ON p.id = a.provider_id WHERE a.id = ?`).get(Number(result.lastInsertRowid)) as RawAccountRow);
   } finally { db.close(); }
 }
 
 export function updateAiAccount(dbPath: string, userId: number, accountId: number, input: Partial<AiAccountInput>): AiAccount {
   initDb(dbPath); seedDefaultProviders(dbPath); const db = open(dbPath);
   try {
-    const existing = db.prepare("SELECT * FROM ai_accounts WHERE id = ? AND user_id = ?").get(accountId, userId) as any;
+    const existing = db.prepare("SELECT * FROM ai_accounts WHERE id = ? AND user_id = ?").get(accountId, userId) as RawAccountDbRow | undefined;
     if (!existing) throw new Error("Compte IA inconnu");
     const name = String(input.name ?? existing.name).trim(); if (!name) throw new Error("Nom du compte IA obligatoire");
     const connectionType = normalizeConnectionType(input.connectionType ?? existing.connection_type);
@@ -316,7 +350,7 @@ export function updateAiAccount(dbPath: string, userId: number, accountId: numbe
     if (providerId && !db.prepare("SELECT 1 FROM ai_providers WHERE id = ?").get(providerId)) throw new Error("Fournisseur IA inconnu");
     db.prepare(`UPDATE ai_accounts SET provider_id = ?, name = ?, connection_type = ?, subscription_name = ?, monthly_cost_eur = ?, notes = ? WHERE id = ? AND user_id = ?`)
       .run(providerId, name, connectionType, input.subscriptionName?.trim() || null, toNonNegativeMoney(input.monthlyCostEur ?? existing.monthly_cost_eur ?? 0), input.notes?.trim() || null, accountId, userId);
-    return rowToAccount(db.prepare(`SELECT a.id, a.user_id as userId, a.provider_id as providerId, p.name as providerName, a.name, a.connection_type as connectionType, a.subscription_name as subscriptionName, a.monthly_cost_eur as monthlyCostEur, a.notes FROM ai_accounts a LEFT JOIN ai_providers p ON p.id = a.provider_id WHERE a.id = ? AND a.user_id = ?`).get(accountId, userId) as any);
+    return rowToAccount(db.prepare(`SELECT a.id, a.user_id as userId, a.provider_id as providerId, p.name as providerName, a.name, a.connection_type as connectionType, a.subscription_name as subscriptionName, a.monthly_cost_eur as monthlyCostEur, a.notes FROM ai_accounts a LEFT JOIN ai_providers p ON p.id = a.provider_id WHERE a.id = ? AND a.user_id = ?`).get(accountId, userId) as RawAccountRow);
   } finally { db.close(); }
 }
 
@@ -344,10 +378,10 @@ export function assignAiAccountToProject(dbPath: string, userId: number, input: 
   initDb(dbPath); seedDefaultProviders(dbPath); const db = open(dbPath);
   try {
     if (!db.prepare("SELECT 1 FROM project_members WHERE user_id = ? AND project_id = ?").get(userId, input.projectId)) throw new Error("Accès projet refusé");
-    const account = db.prepare("SELECT * FROM ai_accounts WHERE id = ? AND user_id = ?").get(input.accountId, userId) as any;
+    const account = db.prepare("SELECT * FROM ai_accounts WHERE id = ? AND user_id = ?").get(input.accountId, userId) as RawAccountDbRow | undefined;
     if (!account) throw new Error("Compte IA inconnu");
     const modelId = input.modelId ? Number(input.modelId) : null;
-    const model = modelId ? db.prepare("SELECT input_price_per_million, output_price_per_million FROM ai_models WHERE id = ?").get(modelId) as any : null;
+    const model = modelId ? db.prepare("SELECT input_price_per_million, output_price_per_million FROM ai_models WHERE id = ?").get(modelId) as RawModelPriceRow | null : null;
     if (modelId && !model) throw new Error("Modèle IA inconnu");
     const connectionType = input.connectionType ? normalizeConnectionType(input.connectionType) : normalizeConnectionType(account.connection_type);
     const inputPrice = toNullableMoney(input.inputPricePerMillion ?? model?.input_price_per_million);
@@ -361,19 +395,19 @@ export function assignAiAccountToProject(dbPath: string, userId: number, input: 
 
 function getSetupById(db: DatabaseSync, setupId: number): ProjectAiSetup {
   return rowToSetup(db.prepare(`SELECT s.id, s.project_id as projectId, p.name as projectName, s.account_id as accountId, a.name as accountName, pr.name as providerName, s.model_id as modelId, m.name as modelName, s.connection_type as connectionType, a.subscription_name as subscriptionName, a.monthly_cost_eur as monthlyCostEur, s.input_price_per_million as inputPricePerMillion, s.output_price_per_million as outputPricePerMillion, s.label
-    FROM project_ai_setups s JOIN projects p ON p.id = s.project_id JOIN ai_accounts a ON a.id = s.account_id LEFT JOIN ai_providers pr ON pr.id = a.provider_id LEFT JOIN ai_models m ON m.id = s.model_id WHERE s.id = ?`).get(setupId) as any);
+    FROM project_ai_setups s JOIN projects p ON p.id = s.project_id JOIN ai_accounts a ON a.id = s.account_id LEFT JOIN ai_providers pr ON pr.id = a.provider_id LEFT JOIN ai_models m ON m.id = s.model_id WHERE s.id = ?`).get(setupId) as RawSetupRow);
 }
 
 export function updateProjectAiSetup(dbPath: string, userId: number, setupId: number, input: ProjectAiSetupInput): ProjectAiSetup {
   initDb(dbPath); seedDefaultProviders(dbPath); const db = open(dbPath);
   try {
-    const current = db.prepare(`SELECT s.* FROM project_ai_setups s JOIN projects p ON p.id = s.project_id JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ? WHERE s.id = ?`).get(userId, setupId) as any;
+    const current = db.prepare(`SELECT s.* FROM project_ai_setups s JOIN projects p ON p.id = s.project_id JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ? WHERE s.id = ?`).get(userId, setupId);
     if (!current) throw new Error("Configuration IA inconnue");
     if (!db.prepare("SELECT 1 FROM project_members WHERE user_id = ? AND project_id = ?").get(userId, input.projectId)) throw new Error("Accès projet refusé");
-    const account = db.prepare("SELECT * FROM ai_accounts WHERE id = ? AND user_id = ?").get(input.accountId, userId) as any;
+    const account = db.prepare("SELECT * FROM ai_accounts WHERE id = ? AND user_id = ?").get(input.accountId, userId) as RawAccountDbRow | undefined;
     if (!account) throw new Error("Compte IA inconnu");
     const modelId = input.modelId ? Number(input.modelId) : null;
-    const model = modelId ? db.prepare("SELECT input_price_per_million, output_price_per_million FROM ai_models WHERE id = ?").get(modelId) as any : null;
+    const model = modelId ? db.prepare("SELECT input_price_per_million, output_price_per_million FROM ai_models WHERE id = ?").get(modelId) as RawModelPriceRow | null : null;
     if (modelId && !model) throw new Error("Modèle IA inconnu");
     const connectionType = input.connectionType ? normalizeConnectionType(input.connectionType) : normalizeConnectionType(account.connection_type);
     const inputPrice = toNullableMoney(input.inputPricePerMillion ?? model?.input_price_per_million);
@@ -388,7 +422,7 @@ export function updateProjectAiSetup(dbPath: string, userId: number, setupId: nu
 export function deleteProjectAiSetup(dbPath: string, userId: number, setupId: number) {
   initDb(dbPath); const db = open(dbPath);
   try {
-    const existing = db.prepare(`SELECT s.project_id as projectId FROM project_ai_setups s JOIN project_members pm ON pm.project_id = s.project_id AND pm.user_id = ? WHERE s.id = ?`).get(userId, setupId) as any;
+    const existing = db.prepare(`SELECT s.project_id as projectId FROM project_ai_setups s JOIN project_members pm ON pm.project_id = s.project_id AND pm.user_id = ? WHERE s.id = ?`).get(userId, setupId) as RawSetupProjectRow | undefined;
     if (!existing) throw new Error("Configuration IA inconnue");
     db.exec("BEGIN");
     try {
@@ -420,8 +454,8 @@ export function estimateProjectUsage(dbPath: string, userId: number, input: Esti
     if (setup.projectId !== input.projectId) throw new Error("Configuration IA hors projet");
     const accountOwner = db.prepare("SELECT 1 FROM ai_accounts WHERE id = ? AND user_id = ?").get(setup.accountId, userId);
     if (!accountOwner) throw new Error("Compte IA refusé");
-    const inputTokens = estimateTokensFromText(input.inputText);
-    const outputTokens = estimateTokensFromText(input.outputText);
+    const inputTokens = estimateTokensFromText(input.inputText, setup.providerName);
+    const outputTokens = estimateTokensFromText(input.outputText, setup.providerName);
     const costEur = setup.connectionType === "api" && setup.inputPricePerMillion != null && setup.outputPricePerMillion != null
       ? toNonNegativeMoney((inputTokens / 1_000_000) * setup.inputPricePerMillion + (outputTokens / 1_000_000) * setup.outputPricePerMillion)
       : 0;
@@ -627,14 +661,14 @@ function countFiles(rootDir: string, folder: "inbox" | "processed" | "failed") {
     return sum + readdirSync(dir).filter((name) => statSync(join(dir, name)).isFile()).length;
   }, 0);
 }
-function rowToRun(row: any): UsageImportRun {
+function rowToRun(row: RawRunRow): UsageImportRun {
   return { id: Number(row.id), userId: Number(row.userId), projectId: Number(row.projectId), setupId: Number(row.setupId), connector: row.connector as UsageConnector, sourcePath: String(row.sourcePath), status: row.status === "success" ? "success" : "failed", importedCount: Number(row.importedCount ?? 0), errorMessage: row.errorMessage == null ? null : String(row.errorMessage), createdAt: String(row.createdAt) };
 }
 function recordImportRun(dbPath: string, userId: number, projectId: number, setupId: number, connector: UsageConnector, sourcePath: string, status: "success" | "failed", importedCount: number, errorMessage?: string) {
   initDb(dbPath); const db = open(dbPath);
   try {
     const result = db.prepare(`INSERT INTO usage_import_runs(user_id, project_id, setup_id, connector, source_path, status, imported_count, error_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(userId, projectId, setupId, connector, sourcePath, status, importedCount, errorMessage || null);
-    return rowToRun(db.prepare(`SELECT id, user_id as userId, project_id as projectId, setup_id as setupId, connector, source_path as sourcePath, status, imported_count as importedCount, error_message as errorMessage, created_at as createdAt FROM usage_import_runs WHERE id = ?`).get(Number(result.lastInsertRowid)) as any);
+    return rowToRun(db.prepare(`SELECT id, user_id as userId, project_id as projectId, setup_id as setupId, connector, source_path as sourcePath, status, imported_count as importedCount, error_message as errorMessage, created_at as createdAt FROM usage_import_runs WHERE id = ?`).get(Number(result.lastInsertRowid)) as RawRunRow);
   } finally { db.close(); }
 }
 
@@ -665,14 +699,14 @@ export function importUsageInbox(dbPath: string, userId: number, input: UsageInb
 export function getUsageCollectorHealth(dbPath: string, userId: number, rootDir: string): UsageCollectorHealth {
   initDb(dbPath); ensureUsageInbox(rootDir); const db = open(dbPath);
   try {
-    const rows = db.prepare(`SELECT id, user_id as userId, project_id as projectId, setup_id as setupId, connector, source_path as sourcePath, status, imported_count as importedCount, error_message as errorMessage, created_at as createdAt FROM usage_import_runs WHERE user_id = ? ORDER BY id DESC LIMIT 8`).all(userId).map(rowToRun);
+    const rows = (db.prepare(`SELECT id, user_id as userId, project_id as projectId, setup_id as setupId, connector, source_path as sourcePath, status, imported_count as importedCount, error_message as errorMessage, created_at as createdAt FROM usage_import_runs WHERE user_id = ? ORDER BY id DESC LIMIT 8`).all(userId) as RawRunRow[]).map(rowToRun);
     return { rootDir, pendingFiles: countFiles(rootDir, "inbox"), processedFiles: countFiles(rootDir, "processed"), failedFiles: countFiles(rootDir, "failed"), lastRun: rows[0] ?? null, recentRuns: rows };
   } finally { db.close(); }
 }
 
 function usageById(db: DatabaseSync, entryId: number): UsageEntry {
   return rowToEntry(db.prepare(`SELECT e.id, e.project_id as projectId, p.name as projectName, e.model_id as modelId, m.name as modelName, pr.name as providerName, e.label, e.input_tokens as inputTokens, e.output_tokens as outputTokens, e.cost_eur as costEur, e.used_at as usedAt
-    FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE e.id = ?`).get(entryId) as any);
+    FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE e.id = ?`).get(entryId) as RawEntryRow);
 }
 
 function csvEscape(value: unknown) {
@@ -683,10 +717,10 @@ function safeReportSlug(value: string) {
   return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase() || "projet";
 }
 function usageReportEntries(db: DatabaseSync, userId: number, projectId: number) {
-  const project = db.prepare(`SELECT p.id, p.name FROM projects p JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ? WHERE p.id = ?`).get(userId, projectId) as any;
+  const project = db.prepare(`SELECT p.id, p.name FROM projects p JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ? WHERE p.id = ?`).get(userId, projectId) as RawProjectRow | undefined;
   if (!project) throw new Error("Accès projet refusé");
-  const entries = db.prepare(`SELECT e.id, e.project_id as projectId, p.name as projectName, e.model_id as modelId, m.name as modelName, pr.name as providerName, e.label, e.input_tokens as inputTokens, e.output_tokens as outputTokens, e.cost_eur as costEur, e.used_at as usedAt
-    FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE e.project_id = ? ORDER BY e.used_at ASC, e.id ASC`).all(projectId).map(rowToEntry);
+  const entries = (db.prepare(`SELECT e.id, e.project_id as projectId, p.name as projectName, e.model_id as modelId, m.name as modelName, pr.name as providerName, e.label, e.input_tokens as inputTokens, e.output_tokens as outputTokens, e.cost_eur as costEur, e.used_at as usedAt
+    FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE e.project_id = ? ORDER BY e.used_at ASC, e.id ASC`).all(projectId) as RawEntryRow[]).map(rowToEntry);
   return { projectName: String(project.name), entries };
 }
 export function buildUsageReport(dbPath: string, userId: number, projectId: number, format: UsageReportFormat = "csv"): UsageReport {
@@ -761,14 +795,14 @@ function withMaxRatio<T extends { totalTokens: number }>(rows: T[]) {
   return rows.map((row) => ({ ...row, maxRatio: maxTokens > 0 ? row.totalTokens / maxTokens : 0 }));
 }
 function _buildUsageChartData(db: DatabaseSync, userId: number, projectId: number): UsageChartData {
-  const project = db.prepare(`SELECT p.id, p.name FROM projects p JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ? WHERE p.id = ?`).get(userId, projectId) as any;
+  const project = db.prepare(`SELECT p.id, p.name FROM projects p JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ? WHERE p.id = ?`).get(userId, projectId) as RawProjectRow | undefined;
   if (!project) throw new Error("Accès projet refusé");
-  const totalsRow = db.prepare(`SELECT count(*) as entries, coalesce(sum(input_tokens),0) as inputTokens, coalesce(sum(output_tokens),0) as outputTokens, coalesce(sum(input_tokens + output_tokens),0) as totalTokens, coalesce(sum(cost_eur),0) as costEur FROM ai_usage_entries WHERE project_id = ?`).get(projectId) as any;
-  const dailyRows = db.prepare(`SELECT substr(used_at,1,10) as date, count(*) as entries, coalesce(sum(input_tokens),0) as inputTokens, coalesce(sum(output_tokens),0) as outputTokens, coalesce(sum(input_tokens + output_tokens),0) as totalTokens, coalesce(sum(cost_eur),0) as costEur FROM ai_usage_entries WHERE project_id = ? GROUP BY substr(used_at,1,10) ORDER BY date ASC`).all(projectId) as any[];
-  const providerRows = db.prepare(`SELECT coalesce(pr.name,'IA') as name, count(*) as entries, coalesce(sum(e.input_tokens),0) as inputTokens, coalesce(sum(e.output_tokens),0) as outputTokens, coalesce(sum(e.input_tokens + e.output_tokens),0) as totalTokens, coalesce(sum(e.cost_eur),0) as costEur FROM ai_usage_entries e LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE e.project_id = ? GROUP BY coalesce(pr.name,'IA') ORDER BY totalTokens DESC, name ASC LIMIT 5`).all(projectId) as any[];
-  const modelRows = db.prepare(`SELECT coalesce(m.name,'Modèle') as name, count(*) as entries, coalesce(sum(e.input_tokens),0) as inputTokens, coalesce(sum(e.output_tokens),0) as outputTokens, coalesce(sum(e.input_tokens + e.output_tokens),0) as totalTokens, coalesce(sum(e.cost_eur),0) as costEur FROM ai_usage_entries e LEFT JOIN ai_models m ON m.id = e.model_id WHERE e.project_id = ? GROUP BY coalesce(m.name,'Modèle') ORDER BY totalTokens DESC, name ASC LIMIT 5`).all(projectId) as any[];
-  const normalize = (row: any) => ({ name: String(row.name), inputTokens: Number(row.inputTokens ?? 0), outputTokens: Number(row.outputTokens ?? 0), totalTokens: Number(row.totalTokens ?? 0), costEur: toNonNegativeMoney(Number(row.costEur ?? 0)), entries: Number(row.entries ?? 0) });
-  const normalizeDaily = (row: any) => ({ date: String(row.date), inputTokens: Number(row.inputTokens ?? 0), outputTokens: Number(row.outputTokens ?? 0), totalTokens: Number(row.totalTokens ?? 0), costEur: toNonNegativeMoney(Number(row.costEur ?? 0)), entries: Number(row.entries ?? 0) });
+  const totalsRow = db.prepare(`SELECT count(*) as entries, coalesce(sum(input_tokens),0) as inputTokens, coalesce(sum(output_tokens),0) as outputTokens, coalesce(sum(input_tokens + output_tokens),0) as totalTokens, coalesce(sum(cost_eur),0) as costEur FROM ai_usage_entries WHERE project_id = ?`).get(projectId) as RawTotalsRow;
+  const dailyRows = db.prepare(`SELECT substr(used_at,1,10) as date, count(*) as entries, coalesce(sum(input_tokens),0) as inputTokens, coalesce(sum(output_tokens),0) as outputTokens, coalesce(sum(input_tokens + output_tokens),0) as totalTokens, coalesce(sum(cost_eur),0) as costEur FROM ai_usage_entries WHERE project_id = ? GROUP BY substr(used_at,1,10) ORDER BY date ASC`).all(projectId) as RawChartRow[];
+  const providerRows = db.prepare(`SELECT coalesce(pr.name,'IA') as name, count(*) as entries, coalesce(sum(e.input_tokens),0) as inputTokens, coalesce(sum(e.output_tokens),0) as outputTokens, coalesce(sum(e.input_tokens + e.output_tokens),0) as totalTokens, coalesce(sum(e.cost_eur),0) as costEur FROM ai_usage_entries e LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE e.project_id = ? GROUP BY coalesce(pr.name,'IA') ORDER BY totalTokens DESC, name ASC LIMIT 5`).all(projectId) as RawBreakdownRow[];
+  const modelRows = db.prepare(`SELECT coalesce(m.name,'Modèle') as name, count(*) as entries, coalesce(sum(e.input_tokens),0) as inputTokens, coalesce(sum(e.output_tokens),0) as outputTokens, coalesce(sum(e.input_tokens + e.output_tokens),0) as totalTokens, coalesce(sum(e.cost_eur),0) as costEur FROM ai_usage_entries e LEFT JOIN ai_models m ON m.id = e.model_id WHERE e.project_id = ? GROUP BY coalesce(m.name,'Modèle') ORDER BY totalTokens DESC, name ASC LIMIT 5`).all(projectId) as RawBreakdownRow[];
+  const normalize = (row: RawBreakdownRow) => ({ name: String(row.name), inputTokens: Number(row.inputTokens ?? 0), outputTokens: Number(row.outputTokens ?? 0), totalTokens: Number(row.totalTokens ?? 0), costEur: toNonNegativeMoney(Number(row.costEur ?? 0)), entries: Number(row.entries ?? 0) });
+  const normalizeDaily = (row: RawChartRow) => ({ date: String(row.date), inputTokens: Number(row.inputTokens ?? 0), outputTokens: Number(row.outputTokens ?? 0), totalTokens: Number(row.totalTokens ?? 0), costEur: toNonNegativeMoney(Number(row.costEur ?? 0)), entries: Number(row.entries ?? 0) });
   return {
     projectId: Number(project.id),
     projectName: String(project.name),
@@ -784,22 +818,28 @@ export function buildUsageChartData(dbPath: string, userId: number, projectId: n
   try { return _buildUsageChartData(db, userId, projectId); } finally { db.close(); }
 }
 
-export function listDashboardData(dbPath: string, userId: number, selectedProjectId?: number) {
+const USAGE_PAGE_SIZE = 30;
+
+export function listDashboardData(dbPath: string, userId: number, selectedProjectId?: number, page = 1) {
   initDb(dbPath); seedDefaultProviders(dbPath); const db = open(dbPath);
   const projects = db.prepare(`SELECT p.id, p.name, p.description, p.owner_user_id as ownerUserId FROM projects p JOIN project_members pm ON pm.project_id = p.id WHERE pm.user_id = ? ORDER BY p.id DESC`).all(userId) as Project[];
   const providers = db.prepare("SELECT id, name, kind FROM ai_providers ORDER BY id").all() as Provider[];
   const models = db.prepare(`SELECT m.id, m.provider_id as providerId, p.name as providerName, m.name, m.api_model_id as apiModelId, m.category, m.input_price_per_million as inputPricePerMillion, m.output_price_per_million as outputPricePerMillion, m.image_price as imagePrice, m.pricing_unit as pricingUnit, m.description, m.source FROM ai_models m JOIN ai_providers p ON p.id = m.provider_id ORDER BY p.name, m.category, m.name`).all() as Model[];
   const selectedProject = projects.find((p) => p.id === selectedProjectId) ?? projects[0] ?? null;
-  const aiAccounts = db.prepare(`SELECT a.id, a.user_id as userId, a.provider_id as providerId, p.name as providerName, a.name, a.connection_type as connectionType, a.subscription_name as subscriptionName, a.monthly_cost_eur as monthlyCostEur, a.notes FROM ai_accounts a LEFT JOIN ai_providers p ON p.id = a.provider_id WHERE a.user_id = ? ORDER BY a.id DESC`).all(userId).map(rowToAccount);
-  const projectAiSetups = selectedProject ? db.prepare(`SELECT s.id, s.project_id as projectId, p.name as projectName, s.account_id as accountId, a.name as accountName, pr.name as providerName, s.model_id as modelId, m.name as modelName, s.connection_type as connectionType, a.subscription_name as subscriptionName, a.monthly_cost_eur as monthlyCostEur, s.input_price_per_million as inputPricePerMillion, s.output_price_per_million as outputPricePerMillion, s.label
-    FROM project_ai_setups s JOIN projects p ON p.id = s.project_id JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ? JOIN ai_accounts a ON a.id = s.account_id LEFT JOIN ai_providers pr ON pr.id = a.provider_id LEFT JOIN ai_models m ON m.id = s.model_id WHERE s.project_id = ? ORDER BY s.id DESC`).all(userId, selectedProject.id).map(rowToSetup) : [];
-  const usage = db.prepare(`SELECT coalesce(sum(input_tokens + output_tokens),0) as tokens, coalesce(sum(cost_eur),0) as cost FROM ai_usage_entries e JOIN project_members pm ON pm.project_id = e.project_id WHERE pm.user_id = ?`).get(userId) as any;
-  const projectUsage = selectedProject ? db.prepare(`SELECT coalesce(sum(input_tokens + output_tokens),0) as tokens, coalesce(sum(cost_eur),0) as cost FROM ai_usage_entries WHERE project_id = ?`).get(selectedProject.id) as any : { tokens: 0, cost: 0 };
+  const aiAccounts = (db.prepare(`SELECT a.id, a.user_id as userId, a.provider_id as providerId, p.name as providerName, a.name, a.connection_type as connectionType, a.subscription_name as subscriptionName, a.monthly_cost_eur as monthlyCostEur, a.notes FROM ai_accounts a LEFT JOIN ai_providers p ON p.id = a.provider_id WHERE a.user_id = ? ORDER BY a.id DESC`).all(userId) as RawAccountRow[]).map(rowToAccount);
+  const projectAiSetups = selectedProject ? (db.prepare(`SELECT s.id, s.project_id as projectId, p.name as projectName, s.account_id as accountId, a.name as accountName, pr.name as providerName, s.model_id as modelId, m.name as modelName, s.connection_type as connectionType, a.subscription_name as subscriptionName, a.monthly_cost_eur as monthlyCostEur, s.input_price_per_million as inputPricePerMillion, s.output_price_per_million as outputPricePerMillion, s.label
+    FROM project_ai_setups s JOIN projects p ON p.id = s.project_id JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ? JOIN ai_accounts a ON a.id = s.account_id LEFT JOIN ai_providers pr ON pr.id = a.provider_id LEFT JOIN ai_models m ON m.id = s.model_id WHERE s.project_id = ? ORDER BY s.id DESC`).all(userId, selectedProject.id) as RawSetupRow[]).map(rowToSetup) : [];
+  const usage = db.prepare(`SELECT coalesce(sum(input_tokens + output_tokens),0) as tokens, coalesce(sum(cost_eur),0) as cost FROM ai_usage_entries e JOIN project_members pm ON pm.project_id = e.project_id WHERE pm.user_id = ?`).get(userId) as RawUsageSumRow;
+  const projectUsage = selectedProject ? db.prepare(`SELECT coalesce(sum(input_tokens + output_tokens),0) as tokens, coalesce(sum(cost_eur),0) as cost FROM ai_usage_entries WHERE project_id = ?`).get(selectedProject.id) as RawUsageSumRow : { tokens: 0, cost: 0 };
   const subscriptionMonthly = projectAiSetups.reduce((sum, setup) => sum + (setup.connectionType === "subscription" ? setup.monthlyCostEur : 0), 0);
-  const usageEntries = db.prepare(`SELECT e.id, e.project_id as projectId, p.name as projectName, e.model_id as modelId, m.name as modelName, pr.name as providerName, e.label, e.input_tokens as inputTokens, e.output_tokens as outputTokens, e.cost_eur as costEur, e.used_at as usedAt FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id JOIN project_members pm ON pm.project_id = e.project_id AND pm.user_id = ? LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE (? IS NULL OR e.project_id = ?) ORDER BY e.used_at DESC, e.id DESC LIMIT 30`).all(userId, selectedProject?.id ?? null, selectedProject?.id ?? null).map(rowToEntry);
+  const safePage = Math.max(1, Math.round(page));
+  const offset = (safePage - 1) * USAGE_PAGE_SIZE;
+  const totalUsageRow = db.prepare(`SELECT count(*) as total FROM ai_usage_entries e JOIN project_members pm ON pm.project_id = e.project_id AND pm.user_id = ? WHERE (? IS NULL OR e.project_id = ?)`).get(userId, selectedProject?.id ?? null, selectedProject?.id ?? null) as { total: number };
+  const totalUsageEntries = Number(totalUsageRow.total ?? 0);
+  const usageEntries = (db.prepare(`SELECT e.id, e.project_id as projectId, p.name as projectName, e.model_id as modelId, m.name as modelName, pr.name as providerName, e.label, e.input_tokens as inputTokens, e.output_tokens as outputTokens, e.cost_eur as costEur, e.used_at as usedAt FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id JOIN project_members pm ON pm.project_id = e.project_id AND pm.user_id = ? LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE (? IS NULL OR e.project_id = ?) ORDER BY e.used_at DESC, e.id DESC LIMIT ? OFFSET ?`).all(userId, selectedProject?.id ?? null, selectedProject?.id ?? null, USAGE_PAGE_SIZE, offset) as RawEntryRow[]).map(rowToEntry);
   const usageCharts = selectedProject ? _buildUsageChartData(db, userId, selectedProject.id) : null;
   db.close();
-  return { projects, providers, models, aiAccounts, projectAiSetups, selectedProject, usageEntries, usageCharts, usage: { tokens: Number(usage.tokens), cost: toNonNegativeMoney(Number(usage.cost)) }, projectUsage: { tokens: Number(projectUsage.tokens), cost: toNonNegativeMoney(Number(projectUsage.cost)), subscriptionMonthly } };
+  return { projects, providers, models, aiAccounts, projectAiSetups, selectedProject, usageEntries, totalUsageEntries, usagePage: safePage, usagePageSize: USAGE_PAGE_SIZE, usageCharts, usage: { tokens: Number(usage.tokens), cost: toNonNegativeMoney(Number(usage.cost)) }, projectUsage: { tokens: Number(projectUsage.tokens), cost: toNonNegativeMoney(Number(projectUsage.cost)), subscriptionMonthly } };
 }
 
 export const DB_PATH = defaultDbPath;
