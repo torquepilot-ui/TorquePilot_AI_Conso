@@ -11,6 +11,7 @@ import {
   estimateProjectUsage, importConnectorUsage, importUsageInbox,
   updateAiAccount, updateProject, updateProjectAiSetup, verifyUser,
 } from "../lib/db";
+import { checkProviderConnection, type ProviderConnectionStatus } from "../lib/provider-api";
 
 async function setSession(userId: number) {
   const jar = await cookies();
@@ -215,4 +216,10 @@ export async function deleteSavedReportAction(formData: FormData) {
     revalidatePath("/");
   } catch (err) { console.error("[deleteSavedReportAction]", err); redirect(`/?project=${projectId || ""}&error=Suppression rapport refusée`); }
   redirect(`/?project=${projectId || ""}`);
+}
+
+export async function getOpenAiStatusAction(): Promise<ProviderConnectionStatus> {
+  const userId = await currentUserId();
+  if (!userId) return { ok: false, provider: "OpenAI", status: "error", message: "Non authentifié" };
+  return checkProviderConnection("OpenAI");
 }

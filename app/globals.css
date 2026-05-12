@@ -170,6 +170,24 @@ button {
   padding: 14px 16px;
 }
 
+/* ── API connection status (Sprint 5A) ─────────────────────────────────────── */
+.apiStatus {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255,255,255,.03);
+  margin: 12px 0;
+  font-size: 13px;
+}
+
+.apiStatus span:first-child { color: var(--muted); font-weight: 700; }
+.apiStatusOk    { color: var(--accent); font-weight: 700; }
+.apiStatusMissing { color: var(--muted); font-weight: 700; }
+.apiStatusError { color: var(--danger); font-weight: 700; }
+
 /* ── Section header & project tabs ────────────────────────────────────────── */
 .sectionHeader {
   display: flex;
