@@ -30,7 +30,7 @@ test("checkOpenAiConnection : clé absente => missing_api_key", async () => {
 test("checkOpenAiConnection : clé + fetch 200 => ok true avec no-store et abort signal", async () => {
   await withKey("sk-test-fake-key", async () => {
     let options: RequestInit | undefined;
-    const mockFetch = async (_url: string, opts?: RequestInit) => {
+    const mockFetch = async (_url: RequestInfo | URL, opts?: RequestInit) => {
       options = opts;
       return ({ ok: true, status: 200 }) as Response;
     };
@@ -46,7 +46,7 @@ test("checkOpenAiConnection : clé + fetch 200 => ok true avec no-store et abort
 test("checkOpenAiConnection : clé + fetch 401 => ok false sans fuite de clé", async () => {
   const fakeKey = "sk-secret-must-not-appear-in-result";
   await withKey(fakeKey, async () => {
-    const mockFetch = async (_url: string, _opts?: RequestInit) =>
+    const mockFetch = async (_url: RequestInfo | URL, _opts?: RequestInit) =>
       ({ ok: false, status: 401 }) as Response;
     const result = await checkOpenAiConnection(mockFetch);
     assert.equal(result.ok, false);
@@ -58,7 +58,7 @@ test("checkOpenAiConnection : clé + fetch 401 => ok false sans fuite de clé", 
 
 test("checkOpenAiConnection : erreur réseau => ok false propre", async () => {
   await withKey("sk-test-fake-key", async () => {
-    const mockFetch = async (_url: string, _opts?: RequestInit): Promise<Response> => {
+    const mockFetch = async (_url: RequestInfo | URL, _opts?: RequestInit): Promise<Response> => {
       throw new Error("ECONNREFUSED");
     };
     const result = await checkOpenAiConnection(mockFetch);
