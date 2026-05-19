@@ -123,6 +123,13 @@ const defaultDbPath = join(process.cwd(), "data", "torquepilot.sqlite");
 const defaultUsageInboxDir = join(process.cwd(), "data", "usage-inbox");
 const defaultUsageReportsDir = join(process.cwd(), "data", "usage-reports");
 const defaultHermesStateDbPath = "/home/torquepilot/.hermes/state.db";
+const hermesProfileStateDbPaths = {
+  default: defaultHermesStateDbPath,
+  "bees-lab": "/home/torquepilot/.hermes/profiles/bees-lab/state.db",
+  "tonton-limule": "/home/torquepilot/.hermes/profiles/tonton-limule/state.db",
+} as const;
+export type HermesProfileId = keyof typeof hermesProfileStateDbPaths;
+
 
 function open(dbPath = defaultDbPath) {
   mkdirSync(dirname(dbPath), { recursive: true });
@@ -606,6 +613,13 @@ function normalizeHermesDate(value: string | number | null | undefined) {
   const parsed = new Date(raw);
   return Number.isNaN(parsed.getTime()) ? new Date().toISOString().slice(0, 10) : parsed.toISOString().slice(0, 10);
 }
+function normalizeHermesProfileId(input?: string): HermesProfileId {
+  const profile = (input || "default").trim().toLowerCase();
+  if (profile in hermesProfileStateDbPaths) return profile as HermesProfileId;
+  throw new Error("Profil HERMES non autorisé");
+}
+export function resolveHermesProfileStateDbPath(profileName?: string) { return hermesProfileStateDbPaths[normalizeHermesProfileId(profileName)]; }
+export function listHermesProfiles() { return Object.entries(hermesProfileStateDbPaths).map(([name, dbPath]) => ({ name: name as HermesProfileId, dbPath })); }
 function hermesDbPath(input?: string) { return input?.trim() || process.env.HERMES_STATE_DB || defaultHermesStateDbPath; }
 function hermesProfileName(input?: string, dbPath?: string) {
   if (input?.trim()) return input.trim();
@@ -617,7 +631,8 @@ function hermesCostEur(row: RawHermesSessionRow) {
   const usdToEur = Number(process.env.HERMES_USD_TO_EUR || 0.92);
   return toNonNegativeMoney(usd * (Number.isFinite(usdToEur) && usdToEur > 0 ? usdToEur : 0.92));
 }
-function getOrCreateHermesSetup(db: DatabaseSync, userId: number, projectId: number, requestedSetupId?: number | null) {
+function hermesProfileDisplayName(profileName: string) { return profileName === "default" ? "HERMES" : profileName.replace(/-/g, " ").toUpperCase(); }
+function getOrCreateHermesSetup(db: DatabaseSync, userId: number, projectId: number, requestedSetupId?: number | null, profileName = "default") {
   if (!db.prepare("SELECT 1 FROM project_members WHERE user_id = ? AND project_id = ?").get(userId, projectId)) throw new Error("Accès projet refusé");
   if (requestedSetupId) {
     const setup = getSetupById(db, requestedSetupId);
@@ -625,19 +640,26 @@ function getOrCreateHermesSetup(db: DatabaseSync, userId: number, projectId: num
     if (!db.prepare("SELECT 1 FROM ai_accounts WHERE id = ? AND user_id = ?").get(setup.accountId, userId)) throw new Error("Compte IA refusé");
     return setup;
   }
-  const existing = db.prepare(`SELECT s.id, s.project_id as projectId, p.name as projectName, s.account_id as accountId, a.name as accountName, pr.name as providerName, s.model_id as modelId, m.name as modelName, s.connection_type as connectionType, a.subscription_name as subscriptionName, a.monthly_cost_eur as monthlyCostEur, s.input_price_per_million as inputPricePerMillion, s.output_price_per_million as outputPricePerMillion, s.label
+  const profile = normalizeHermesProfileId(profileName);
+  const profileLabel = profile === "default" ? "HERMES Local Usage" : `HERMES Local Usage — ${hermesProfileDisplayName(profile)}`;
+  const existingSql = `SELECT s.id, s.project_id as projectId, p.name as projectName, s.account_id as accountId, a.name as accountName, pr.name as providerName, s.model_id as modelId, m.name as modelName, s.connection_type as connectionType, a.subscription_name as subscriptionName, a.monthly_cost_eur as monthlyCostEur, s.input_price_per_million as inputPricePerMillion, s.output_price_per_million as outputPricePerMillion, s.label
     FROM project_ai_setups s JOIN projects p ON p.id = s.project_id JOIN ai_accounts a ON a.id = s.account_id LEFT JOIN ai_providers pr ON pr.id = a.provider_id LEFT JOIN ai_models m ON m.id = s.model_id
-    WHERE s.project_id = ? AND a.user_id = ? AND lower(s.label) LIKE '%hermes%' ORDER BY s.id LIMIT 1`).get(projectId, userId) as RawSetupRow | undefined;
+    WHERE s.project_id = ? AND a.user_id = ? AND lower(s.label) LIKE '%hermes%' ${profile === "default" ? "" : "AND (lower(s.label) LIKE ? OR lower(s.label) LIKE ?)"} ORDER BY s.id LIMIT 1`;
+  const existing = (profile === "default"
+    ? db.prepare(existingSql).get(projectId, userId)
+    : db.prepare(existingSql).get(projectId, userId, `%${profile}%`, `%${hermesProfileDisplayName(profile).toLowerCase()}%`)) as RawSetupRow | undefined;
   if (existing) return rowToSetup(existing);
-  let account = db.prepare("SELECT id FROM ai_accounts WHERE user_id = ? AND lower(name) LIKE '%hermes%' ORDER BY id LIMIT 1").get(userId) as { id: number } | undefined;
+  const accountName = profile === "default" ? "HERMES Local" : `HERMES Local — ${hermesProfileDisplayName(profile)}`;
+  let account = db.prepare("SELECT id FROM ai_accounts WHERE user_id = ? AND lower(name) = lower(?) ORDER BY id LIMIT 1").get(userId, accountName) as { id: number } | undefined;
+  if (!account && profile === "default") account = db.prepare("SELECT id FROM ai_accounts WHERE user_id = ? AND lower(name) LIKE '%hermes%' ORDER BY id LIMIT 1").get(userId) as { id: number } | undefined;
   if (!account) {
     const provider = db.prepare("SELECT id FROM ai_providers WHERE name = 'OpenAI' ORDER BY id LIMIT 1").get() as { id: number } | undefined;
-    const inserted = db.prepare("INSERT INTO ai_accounts(user_id, provider_id, name, connection_type, subscription_name, monthly_cost_eur, notes) VALUES (?, ?, 'HERMES Local', 'api', NULL, 0, 'Compte créé automatiquement pour import metadata-only depuis HERMES state.db')").run(userId, provider?.id ?? null);
+    const inserted = db.prepare("INSERT INTO ai_accounts(user_id, provider_id, name, connection_type, subscription_name, monthly_cost_eur, notes) VALUES (?, ?, ?, 'local', NULL, 0, ?)").run(userId, provider?.id ?? null, accountName, `Compte créé automatiquement pour import metadata-only depuis HERMES profile ${profile}`);
     account = { id: Number(inserted.lastInsertRowid) };
   }
   const model = db.prepare("SELECT id FROM ai_models WHERE api_model_id = 'gpt-4.1' OR name = 'GPT-4.1' ORDER BY id LIMIT 1").get() as { id: number } | undefined;
   const result = db.prepare(`INSERT INTO project_ai_setups(project_id, account_id, model_id, connection_type, label, input_price_per_million, output_price_per_million)
-    SELECT ?, ?, ?, a.connection_type, 'HERMES Local Usage', m.input_price_per_million, m.output_price_per_million FROM ai_accounts a LEFT JOIN ai_models m ON m.id = ? WHERE a.id = ? AND a.user_id = ?`).run(projectId, account.id, model?.id ?? null, model?.id ?? null, account.id, userId);
+    SELECT ?, ?, ?, a.connection_type, ?, m.input_price_per_million, m.output_price_per_million FROM ai_accounts a LEFT JOIN ai_models m ON m.id = ? WHERE a.id = ? AND a.user_id = ?`).run(projectId, account.id, model?.id ?? null, profileLabel, model?.id ?? null, account.id, userId);
   return getSetupById(db, Number(result.lastInsertRowid));
 }
 export function previewHermesLocalUsage(hermesStateDbPath = defaultHermesStateDbPath, profileName?: string): HermesLocalUsagePreview {
@@ -657,14 +679,14 @@ export function importHermesLocalUsage(dbPath: string, userId: number, input: He
   const db = open(dbPath);
   const hdb = new DatabaseSync(sourceDbPath, { readOnly: true });
   try {
-    const setup = getOrCreateHermesSetup(db, userId, input.projectId, input.setupId);
+    const setup = getOrCreateHermesSetup(db, userId, input.projectId, input.setupId, profile);
     const rows = hdb.prepare(`SELECT id, source, model, started_at, ended_at, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, billing_provider, estimated_cost_usd, actual_cost_usd, api_call_count, tool_call_count FROM sessions WHERE coalesce(input_tokens,0)+coalesce(output_tokens,0)+coalesce(reasoning_tokens,0)+coalesce(cache_read_tokens,0)+coalesce(cache_write_tokens,0) > 0 ORDER BY coalesce(started_at, ended_at), id`).all() as RawHermesSessionRow[];
     if (!rows.length) throw new Error("Aucune session HERMES importable détectée");
     const entries: UsageEntry[] = [];
     db.exec("BEGIN");
     try {
       for (const row of rows) {
-        const sourceId = `${profile}:${row.id}`;
+        const sourceId = profile === "default" ? row.id : `${profile}:${row.id}`;
         if (db.prepare("SELECT 1 FROM ai_usage_entries WHERE project_id = ? AND source_connector = 'hermes' AND source_id = ?").get(input.projectId, sourceId)) continue;
         const inputTokens = toNonNegativeInteger(Number(row.input_tokens ?? 0) + Number(row.cache_read_tokens ?? 0) + Number(row.cache_write_tokens ?? 0));
         const outputTokens = toNonNegativeInteger(Number(row.output_tokens ?? 0) + Number(row.reasoning_tokens ?? 0));

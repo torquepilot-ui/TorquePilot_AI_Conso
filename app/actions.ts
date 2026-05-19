@@ -5,10 +5,10 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { makeSession, readSession } from "../lib/session";
 import {
-  DB_PATH, HERMES_STATE_DB_PATH, USAGE_INBOX_DIR, USAGE_REPORTS_DIR,
+  DB_PATH, USAGE_INBOX_DIR, USAGE_REPORTS_DIR,
   assignAiAccountToProject, createAiAccount, createProject, createUser,
   deleteAiAccount, deleteProject, deleteProjectAiSetup, deleteSavedUsageReport,
-  estimateProjectUsage, importConnectorUsage, importHermesLocalUsage, importUsageInbox,
+  estimateProjectUsage, importConnectorUsage, importHermesLocalUsage, importUsageInbox, resolveHermesProfileStateDbPath,
   updateAiAccount, updateProject, updateProjectAiSetup, verifyUser,
 } from "../lib/db";
 import { checkProviderConnection, type ProviderConnectionStatus } from "../lib/provider-api";
@@ -213,11 +213,12 @@ export async function importHermesLocalAction(formData: FormData) {
   if (!userId) redirect("/");
   const projectId = Number(formData.get("projectId") || 0);
   try {
+    const profileName = String(formData.get("profileName") || "default");
     importHermesLocalUsage(DB_PATH, userId, {
       projectId,
       setupId: Number(formData.get("setupId") || 0) || null,
-      hermesDbPath: HERMES_STATE_DB_PATH,
-      profileName: String(formData.get("profileName") || "default"),
+      hermesDbPath: resolveHermesProfileStateDbPath(profileName),
+      profileName,
     });
     revalidatePath("/");
   } catch (err) { console.error("[importHermesLocalAction]", err); redirect(`/?project=${projectId || ""}&error=Import HERMES local refusé`); }

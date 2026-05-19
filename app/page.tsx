@@ -1,4 +1,4 @@
-import { DB_PATH, HERMES_STATE_DB_PATH, USAGE_INBOX_DIR, USAGE_REPORTS_DIR, getUsageCollectorHealth, getUserById, listDashboardData, listSavedUsageReports, previewHermesLocalUsage, previewUsageInbox, seedDefaultProviders } from "../lib/db";
+import { DB_PATH, USAGE_INBOX_DIR, USAGE_REPORTS_DIR, getUsageCollectorHealth, getUserById, listDashboardData, listSavedUsageReports, previewHermesLocalUsage, previewUsageInbox, resolveHermesProfileStateDbPath, seedDefaultProviders } from "../lib/db";
 import { currentUserId, registerAction, loginAction, logoutAction, createProjectAction, deleteProjectAction, updateProjectAction, createAiAccountAction, updateAiAccountAction, deleteAiAccountAction, assignAiSetupAction, updateAiSetupAction, deleteAiSetupAction, estimateUsageAction, importUsageAction, importInboxAction, importHermesLocalAction, deleteSavedReportAction, getOpenAiStatusAction } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -53,9 +53,11 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
   const data = listDashboardData(DB_PATH, user.id, selectedProjectId, page);
   const collectorHealth = getUsageCollectorHealth(DB_PATH, user.id, USAGE_INBOX_DIR);
   const collectorPreview = previewUsageInbox(USAGE_INBOX_DIR);
-  const hermesPreview = (() => { try { return previewHermesLocalUsage(HERMES_STATE_DB_PATH); } catch { return null; } })();
-  const savedReports = listSavedUsageReports(USAGE_REPORTS_DIR);
   const selectedProject = data.selectedProject;
+  const selectedHermesProfile = selectedProject?.name.toLowerCase().includes("bees") ? "bees-lab" : "default";
+  const selectedHermesDbPath = resolveHermesProfileStateDbPath(selectedHermesProfile);
+  const hermesPreview = (() => { try { return previewHermesLocalUsage(selectedHermesDbPath, selectedHermesProfile); } catch { return null; } })();
+  const savedReports = listSavedUsageReports(USAGE_REPORTS_DIR);
   const apiSetups = data.projectAiSetups.filter((s) => s.connectionType === "api");
   const openAiStatus = await getOpenAiStatusAction();
   const categoryCounts = data.models.reduce<Record<string, number>>((acc, model) => { acc[model.category] = (acc[model.category] || 0) + 1; return acc; }, {});
@@ -149,9 +151,9 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
         <div className="list">{collectorHealth.recentRuns.length ? collectorHealth.recentRuns.map((run) => <div className="row compact" key={run.id}><div><h3>{run.connector} · {run.status === "success" ? "OK" : "Erreur"}</h3><p>{run.sourcePath}</p>{run.errorMessage && <p className="alert">{run.errorMessage}</p>}</div><span className="pill">{run.importedCount} lignes</span></div>) : <p className="muted">Aucun run d’import dossier pour l’instant.</p>}</div>
       </aside>
       <aside className="panel"><div className="sectionHeader"><div><p className="eyebrow">HERMES Agent local</p><h2>state.db → dashboard</h2></div><span className="pill">{hermesPreview ? `${hermesPreview.importableSessions} session(s)` : "À connecter"}</span></div>
-        {hermesPreview ? <div className="grid stats hermesStats"><article className="card"><span>Input</span><strong>{hermesPreview.inputTokens.toLocaleString("fr-FR")}</strong><small>+ cache {hermesPreview.cacheTokens.toLocaleString("fr-FR")}</small></article><article className="card"><span>Output</span><strong>{hermesPreview.outputTokens.toLocaleString("fr-FR")}</strong><small>reasoning {hermesPreview.reasoningTokens.toLocaleString("fr-FR")}</small></article><article className="card"><span>Coût brut</span><strong>{hermesPreview.costUsd.toFixed(4)} $</strong><small>{hermesPreview.profileName}</small></article></div> : <p className="muted">Base locale introuvable : <code>{HERMES_STATE_DB_PATH}</code></p>}
-        <p className="muted">Import lecture seule depuis <code>{HERMES_STATE_DB_PATH}</code>. Anti-doublons par session HERMES : relancer l’import n’ajoute que les nouvelles sessions.</p>
-        {selectedProject ? <form action={importHermesLocalAction} className="inlineForm"><input type="hidden" name="projectId" value={selectedProject.id} /><input name="profileName" defaultValue="default" /><select name="setupId"><option value="">Auto HERMES</option>{data.projectAiSetups.map((s) => <option value={s.id} key={s.id}>{s.label}</option>)}</select><button>Importer HERMES</button></form> : <p className="muted">Sélectionne ou crée un projet avant import HERMES.</p>}
+        {hermesPreview ? <div className="grid stats hermesStats"><article className="card"><span>Input</span><strong>{hermesPreview.inputTokens.toLocaleString("fr-FR")}</strong><small>+ cache {hermesPreview.cacheTokens.toLocaleString("fr-FR")}</small></article><article className="card"><span>Output</span><strong>{hermesPreview.outputTokens.toLocaleString("fr-FR")}</strong><small>reasoning {hermesPreview.reasoningTokens.toLocaleString("fr-FR")}</small></article><article className="card"><span>Coût brut</span><strong>{hermesPreview.costUsd.toFixed(4)} $</strong><small>{hermesPreview.profileName}</small></article></div> : <p className="muted">Base locale introuvable : <code>{selectedHermesDbPath}</code></p>}
+        <p className="muted">Import lecture seule depuis <code>{selectedHermesDbPath}</code>. Profil serveur autorisé : <code>{selectedHermesProfile}</code>. Anti-doublons par session HERMES : relancer l’import n’ajoute que les nouvelles sessions.</p>
+        {selectedProject ? <form action={importHermesLocalAction} className="inlineForm"><input type="hidden" name="projectId" value={selectedProject.id} /><select name="profileName" defaultValue={selectedHermesProfile}><option value="default">default</option><option value="bees-lab">bees-lab</option><option value="tonton-limule">tonton-limule</option></select><select name="setupId"><option value="">Auto HERMES</option>{data.projectAiSetups.map((s) => <option value={s.id} key={s.id}>{s.label}</option>)}</select><button>Importer HERMES</button></form> : <p className="muted">Sélectionne ou crée un projet avant import HERMES.</p>}
       </aside>
     </section>
 

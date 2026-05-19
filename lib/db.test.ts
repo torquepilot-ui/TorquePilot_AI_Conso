@@ -26,6 +26,7 @@ import {
   importConnectorUsage,
   importHermesLocalUsage,
   previewHermesLocalUsage,
+  resolveHermesProfileStateDbPath,
   importUsageInbox,
   previewUsageInbox,
   getUsageCollectorHealth,
@@ -749,6 +750,59 @@ test("connecteur HERMES local : importe les métriques sessions sans doublons", 
     assert.equal(second.importedCount, 0);
     const refreshed = listDashboardData(dbPath, user.id, project.id);
     assert.equal(refreshed.usage.tokens, 172);
+  } finally {
+    cleanup();
+    rmSync(hermesDir, { recursive: true, force: true });
+  }
+});
+
+test("connecteur HERMES local : profil BEES autorisé crée un setup séparé et déduplique", () => {
+  const { dbPath, cleanup } = tempDb();
+  const hermesDir = mkdtempSync(join(tmpdir(), "tp-hermes-bees-"));
+  const hermesDbPath = join(hermesDir, "state.db");
+  try {
+    initDb(dbPath);
+    seedDefaultProviders(dbPath);
+    const user = createUser(dbPath, "bees-hermes@example.local", "secret-test");
+    const project = createProject(dbPath, user.id, "BEES LAB", "HERMES AGENT");
+
+    const hdb = new DatabaseSync(hermesDbPath);
+    hdb.exec(`CREATE TABLE sessions (
+      id TEXT PRIMARY KEY,
+      source TEXT NOT NULL,
+      model TEXT,
+      started_at REAL NOT NULL,
+      ended_at REAL,
+      input_tokens INTEGER DEFAULT 0,
+      output_tokens INTEGER DEFAULT 0,
+      cache_read_tokens INTEGER DEFAULT 0,
+      cache_write_tokens INTEGER DEFAULT 0,
+      reasoning_tokens INTEGER DEFAULT 0,
+      billing_provider TEXT,
+      estimated_cost_usd REAL,
+      actual_cost_usd REAL,
+      api_call_count INTEGER DEFAULT 0,
+      tool_call_count INTEGER DEFAULT 0
+    );`);
+    hdb.prepare(`INSERT INTO sessions(id, source, model, started_at, ended_at, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, billing_provider, estimated_cost_usd, actual_cost_usd, api_call_count, tool_call_count)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run("bees-sess-1", "telegram", "gpt-4.1", 1770100000, 1770100060, 200, 25, 30, 10, 5, "openai", 0, 0, 1, 0);
+    hdb.close();
+
+    assert.equal(resolveHermesProfileStateDbPath("bees-lab"), "/home/torquepilot/.hermes/profiles/bees-lab/state.db");
+    assert.throws(() => resolveHermesProfileStateDbPath("../../tmp/evil"), /Profil HERMES non autorisé/);
+
+    const first = importHermesLocalUsage(dbPath, user.id, { projectId: project.id, setupId: null, hermesDbPath, profileName: "bees-lab" });
+    assert.equal(first.importedCount, 1);
+    assert.equal(first.entries[0].inputTokens, 240);
+    assert.equal(first.entries[0].outputTokens, 30);
+    assert.match(first.entries[0].label, /HERMES bees-lab · gpt-4\.1 · telegram/);
+
+    const second = importHermesLocalUsage(dbPath, user.id, { projectId: project.id, setupId: null, hermesDbPath, profileName: "bees-lab" });
+    assert.equal(second.importedCount, 0);
+    const refreshed = listDashboardData(dbPath, user.id, project.id);
+    assert.equal(refreshed.usage.tokens, 270);
+    const beesSetups = refreshed.projectAiSetups.filter((setup) => setup.label.includes("BEES LAB"));
+    assert.equal(beesSetups.length, 1);
   } finally {
     cleanup();
     rmSync(hermesDir, { recursive: true, force: true });
