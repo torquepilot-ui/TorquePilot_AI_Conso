@@ -72,6 +72,7 @@ h2 { margin: 0 0 18px; }
   padding: 10px 14px;
   font-weight: 700;
   white-space: nowrap;
+  max-width: 100%;
 }
 
 /* ── Stats grid ────────────────────────────────────────────────────────────── */
@@ -82,6 +83,11 @@ h2 { margin: 0 0 18px; }
   margin: 22px 0;
 }
 
+.stats {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
 /* ── Cards & panels ────────────────────────────────────────────────────────── */
 .card, .panel {
   border: 1px solid var(--border);
@@ -90,9 +96,28 @@ h2 { margin: 0 0 18px; }
   box-shadow: 0 20px 60px rgba(0,0,0,.22);
 }
 
-.card { padding: 22px; }
+.card { min-width: 0; padding: 22px; }
 .card span, .card small { display: block; color: var(--muted); }
-.card strong { display: block; font-size: 38px; margin: 10px 0; color: white; }
+.card strong {
+  display: block;
+  max-width: 100%;
+  margin: 10px 0;
+  color: white;
+  font-size: clamp(24px, 3.4vw, 38px);
+  line-height: 1.05;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+.collectorStats .card,
+.hermesStats .card {
+  padding: 16px;
+}
+
+.collectorStats .card strong,
+.hermesStats .card strong {
+  font-size: clamp(20px, 2.5vw, 30px);
+}
 
 .panel { padding: 24px; }
 
@@ -110,6 +135,40 @@ h2 { margin: 0 0 18px; }
 }
 
 .row.compact { align-items: flex-start; }
+.row > div,
+.row > summary > div {
+  min-width: 0;
+}
+
+details.row {
+  display: block;
+}
+
+details.row > summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  cursor: pointer;
+  list-style: none;
+}
+
+details.row > summary::-webkit-details-marker { display: none; }
+
+.collectorDetails {
+  margin: 14px 0 0;
+}
+
+.collectorDetails .formatPill {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  text-align: center;
+}
+
+.collectorDetails[open] > .muted {
+  margin-top: 12px;
+}
+
 .row h3 { margin: 0 0 8px; }
 .row p  { margin: 4px 0; color: var(--muted); }
 
@@ -132,6 +191,16 @@ h2 { margin: 0 0 18px; }
 .inlineForm {
   grid-template-columns: 1fr 1fr auto;
   margin: 14px 0 18px;
+  align-items: stretch;
+}
+
+.panel > .inlineForm {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) max-content;
+}
+
+.panel > .inlineForm button {
+  min-width: max-content;
+  white-space: nowrap;
 }
 
 .usageForm { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -150,6 +219,7 @@ input, select, textarea, button {
 
 textarea { resize: vertical; min-height: 120px; }
 select option { background: #101b2e; color: var(--text); }
+code { overflow-wrap: anywhere; }
 
 button {
   cursor: pointer;
@@ -216,6 +286,8 @@ button {
 /* ── Responsive 900px ──────────────────────────────────────────────────────── */
 @media (max-width: 900px) {
   .grid, .layout, .authGrid, .usageForm, .inlineForm { grid-template-columns: 1fr; }
+  .panel > .inlineForm { grid-template-columns: 1fr; }
+  .panel > .inlineForm button { min-width: 0; }
   .hero, .sectionHeader, .row { flex-direction: column; }
   .pill { white-space: normal; }
   h1 { font-size: 42px; }
@@ -358,6 +430,9 @@ button {
   .barRow strong { text-align: left; }
 
   .pill, .badge { white-space: normal; text-align: center; }
+
+  details.row > summary { flex-direction: column; align-items: stretch; }
+  .collectorDetails .formatPill { align-self: stretch; }
 
   input, select, textarea, button, .buttonLink { width: 100%; font-size: 16px; }
 
