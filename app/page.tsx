@@ -1,5 +1,5 @@
-import { DB_PATH, USAGE_INBOX_DIR, USAGE_REPORTS_DIR, getUsageCollectorHealth, getUserById, listDashboardData, listSavedUsageReports, previewUsageInbox, seedDefaultProviders } from "../lib/db";
-import { currentUserId, registerAction, loginAction, logoutAction, createProjectAction, deleteProjectAction, updateProjectAction, createAiAccountAction, updateAiAccountAction, deleteAiAccountAction, assignAiSetupAction, updateAiSetupAction, deleteAiSetupAction, estimateUsageAction, importUsageAction, importInboxAction, deleteSavedReportAction, getOpenAiStatusAction } from "./actions";
+import { DB_PATH, HERMES_STATE_DB_PATH, USAGE_INBOX_DIR, USAGE_REPORTS_DIR, getUsageCollectorHealth, getUserById, listDashboardData, listSavedUsageReports, previewHermesLocalUsage, previewUsageInbox, seedDefaultProviders } from "../lib/db";
+import { currentUserId, registerAction, loginAction, logoutAction, createProjectAction, deleteProjectAction, updateProjectAction, createAiAccountAction, updateAiAccountAction, deleteAiAccountAction, assignAiSetupAction, updateAiSetupAction, deleteAiSetupAction, estimateUsageAction, importUsageAction, importInboxAction, importHermesLocalAction, deleteSavedReportAction, getOpenAiStatusAction } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +53,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
   const data = listDashboardData(DB_PATH, user.id, selectedProjectId, page);
   const collectorHealth = getUsageCollectorHealth(DB_PATH, user.id, USAGE_INBOX_DIR);
   const collectorPreview = previewUsageInbox(USAGE_INBOX_DIR);
+  const hermesPreview = (() => { try { return previewHermesLocalUsage(HERMES_STATE_DB_PATH); } catch { return null; } })();
   const savedReports = listSavedUsageReports(USAGE_REPORTS_DIR);
   const selectedProject = data.selectedProject;
   const apiSetups = data.projectAiSetups.filter((s) => s.connectionType === "api");
@@ -146,6 +147,11 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
         <div className="list">{collectorPreview.files.length ? collectorPreview.files.map((file) => <div className="row compact" key={file.sourcePath}><div><h3>{file.connector} · {file.fileName}</h3><p>{file.status === "ready" ? `${file.detectedCount} ligne(s) · ${file.totalTokens.toLocaleString("fr-FR")} tok · ${fileSize(file.sizeBytes)}` : file.errorMessage}</p>{file.sampleLabels.length ? <small>{file.sampleLabels.join(" · ")}</small> : null}</div><span className="pill">{file.status === "ready" ? "Prêt" : "À corriger"}</span></div>) : <p className="muted">Aucun fichier dans inbox pour l’instant.</p>}</div>
         {selectedProject && data.projectAiSetups.length ? <form action={importInboxAction} className="inlineForm"><input type="hidden" name="projectId" value={selectedProject.id} /><select name="setupId" required>{data.projectAiSetups.map((s) => <option value={s.id} key={s.id}>{s.label}</option>)}</select><input name="usedAt" type="date" defaultValue={new Date().toISOString().slice(0, 10)} /><button>Importer fichiers prêts</button></form> : <p className="muted">Affecte d’abord un compte IA au projet.</p>}
         <div className="list">{collectorHealth.recentRuns.length ? collectorHealth.recentRuns.map((run) => <div className="row compact" key={run.id}><div><h3>{run.connector} · {run.status === "success" ? "OK" : "Erreur"}</h3><p>{run.sourcePath}</p>{run.errorMessage && <p className="alert">{run.errorMessage}</p>}</div><span className="pill">{run.importedCount} lignes</span></div>) : <p className="muted">Aucun run d’import dossier pour l’instant.</p>}</div>
+      </aside>
+      <aside className="panel"><div className="sectionHeader"><div><p className="eyebrow">HERMES Agent local</p><h2>state.db → dashboard</h2></div><span className="pill">{hermesPreview ? `${hermesPreview.importableSessions} session(s)` : "À connecter"}</span></div>
+        {hermesPreview ? <div className="grid stats"><article className="card"><span>Input</span><strong>{hermesPreview.inputTokens.toLocaleString("fr-FR")}</strong><small>+ cache {hermesPreview.cacheTokens.toLocaleString("fr-FR")}</small></article><article className="card"><span>Output</span><strong>{hermesPreview.outputTokens.toLocaleString("fr-FR")}</strong><small>reasoning {hermesPreview.reasoningTokens.toLocaleString("fr-FR")}</small></article><article className="card"><span>Coût brut</span><strong>{hermesPreview.costUsd.toFixed(4)} $</strong><small>{hermesPreview.profileName}</small></article></div> : <p className="muted">Base locale introuvable : <code>{HERMES_STATE_DB_PATH}</code></p>}
+        <p className="muted">Import lecture seule depuis <code>{HERMES_STATE_DB_PATH}</code>. Anti-doublons par session HERMES : relancer l’import n’ajoute que les nouvelles sessions.</p>
+        {selectedProject ? <form action={importHermesLocalAction} className="inlineForm"><input type="hidden" name="projectId" value={selectedProject.id} /><input name="profileName" defaultValue="default" /><select name="setupId"><option value="">Auto HERMES</option>{data.projectAiSetups.map((s) => <option value={s.id} key={s.id}>{s.label}</option>)}</select><button>Importer HERMES</button></form> : <p className="muted">Sélectionne ou crée un projet avant import HERMES.</p>}
       </aside>
     </section>
 

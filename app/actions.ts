@@ -5,10 +5,10 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { makeSession, readSession } from "../lib/session";
 import {
-  DB_PATH, USAGE_INBOX_DIR, USAGE_REPORTS_DIR,
+  DB_PATH, HERMES_STATE_DB_PATH, USAGE_INBOX_DIR, USAGE_REPORTS_DIR,
   assignAiAccountToProject, createAiAccount, createProject, createUser,
   deleteAiAccount, deleteProject, deleteProjectAiSetup, deleteSavedUsageReport,
-  estimateProjectUsage, importConnectorUsage, importUsageInbox,
+  estimateProjectUsage, importConnectorUsage, importHermesLocalUsage, importUsageInbox,
   updateAiAccount, updateProject, updateProjectAiSetup, verifyUser,
 } from "../lib/db";
 import { checkProviderConnection, type ProviderConnectionStatus } from "../lib/provider-api";
@@ -204,6 +204,23 @@ export async function importInboxAction(formData: FormData) {
     importUsageInbox(DB_PATH, userId, { rootDir: USAGE_INBOX_DIR, projectId, setupId: Number(formData.get("setupId") || 0), usedAt: String(formData.get("usedAt") || "") });
     revalidatePath("/");
   } catch (err) { console.error("[importInboxAction]", err); redirect(`/?project=${projectId || ""}&error=Import dossier refusé`); }
+  redirect(`/?project=${projectId}`);
+}
+
+
+export async function importHermesLocalAction(formData: FormData) {
+  const userId = await currentUserId();
+  if (!userId) redirect("/");
+  const projectId = Number(formData.get("projectId") || 0);
+  try {
+    importHermesLocalUsage(DB_PATH, userId, {
+      projectId,
+      setupId: Number(formData.get("setupId") || 0) || null,
+      hermesDbPath: HERMES_STATE_DB_PATH,
+      profileName: String(formData.get("profileName") || "default"),
+    });
+    revalidatePath("/");
+  } catch (err) { console.error("[importHermesLocalAction]", err); redirect(`/?project=${projectId || ""}&error=Import HERMES local refusé`); }
   redirect(`/?project=${projectId}`);
 }
 

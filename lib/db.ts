@@ -68,9 +68,11 @@ export type AiAccountInput = { providerId?: number | null; name: string; connect
 export type ProjectAiSetupInput = { projectId: number; accountId: number; modelId?: number | null; connectionType?: ConnectionType; label?: string; inputPricePerMillion?: number | null; outputPricePerMillion?: number | null };
 export type EstimateInput = { projectId: number; setupId: number; label: string; inputText: string; outputText: string; usedAt?: string };
 export type AutomaticUsageImportInput = { projectId: number; setupId: number; sourceName: string; rawExport: string; usedAt?: string };
-export type UsageConnector = "generic" | "openai" | "anthropic" | "google" | "ollama" | "local";
+export type UsageConnector = "generic" | "openai" | "anthropic" | "google" | "ollama" | "local" | "hermes";
 export type ConnectorUsageImportInput = AutomaticUsageImportInput & { connector: UsageConnector };
 export type AutomaticUsageImportResult = { importedCount: number; totalInputTokens: number; totalOutputTokens: number; totalCostEur: number; entries: UsageEntry[] };
+export type HermesLocalUsageImportInput = { projectId: number; setupId?: number | null; hermesDbPath?: string; profileName?: string };
+export type HermesLocalUsagePreview = { dbPath: string; profileName: string; sessions: number; importableSessions: number; inputTokens: number; outputTokens: number; cacheTokens: number; reasoningTokens: number; costUsd: number; startedAt: string | null; endedAt: string | null };
 export type UsageInboxImportInput = { rootDir: string; projectId: number; setupId: number; usedAt?: string };
 export type UsageImportRun = { id: number; userId: number; projectId: number; setupId: number; connector: UsageConnector; sourcePath: string; status: "success" | "failed"; importedCount: number; errorMessage: string | null; createdAt: string };
 export type UsageInboxImportResult = AutomaticUsageImportResult & { processedFiles: number; failedFiles: number; runs: UsageImportRun[] };
@@ -102,6 +104,8 @@ type RawTotalsRow = { entries: number; inputTokens: number; outputTokens: number
 type RawChartRow = { date: string; entries: number; inputTokens: number; outputTokens: number; totalTokens: number; costEur: number };
 type RawBreakdownRow = { name: string; entries: number; inputTokens: number; outputTokens: number; totalTokens: number; costEur: number };
 type RawUsageSumRow = { tokens: number; cost: number };
+type RawHermesSessionRow = { id: string; source: string | null; model: string | null; started_at: string | number | null; ended_at: string | number | null; input_tokens: number | null; output_tokens: number | null; cache_read_tokens: number | null; cache_write_tokens: number | null; reasoning_tokens: number | null; billing_provider: string | null; estimated_cost_usd: number | null; actual_cost_usd: number | null; api_call_count: number | null; tool_call_count: number | null };
+type RawHermesPreviewRow = { sessions: number; importableSessions: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; reasoningTokens: number; estimatedCostUsd: number; actualCostUsd: number; startedAt: string | null; endedAt: string | null };
 
 // Chars-per-token ratios by provider family for text estimation
 const TOKEN_CHARS_BY_PROVIDER: Record<string, number> = {
@@ -118,6 +122,7 @@ const TOKEN_CHARS_BY_PROVIDER: Record<string, number> = {
 const defaultDbPath = join(process.cwd(), "data", "torquepilot.sqlite");
 const defaultUsageInboxDir = join(process.cwd(), "data", "usage-inbox");
 const defaultUsageReportsDir = join(process.cwd(), "data", "usage-reports");
+const defaultHermesStateDbPath = "/home/torquepilot/.hermes/state.db";
 
 function open(dbPath = defaultDbPath) {
   mkdirSync(dirname(dbPath), { recursive: true });
@@ -140,6 +145,9 @@ function migrate(db: DatabaseSync) {
   if (!columnExists(db, "ai_usage_entries", "account_id")) db.exec("ALTER TABLE ai_usage_entries ADD COLUMN account_id INTEGER REFERENCES ai_accounts(id)");
   if (!columnExists(db, "ai_usage_entries", "setup_id")) db.exec("ALTER TABLE ai_usage_entries ADD COLUMN setup_id INTEGER REFERENCES project_ai_setups(id)");
   if (!columnExists(db, "ai_usage_entries", "estimation_method")) db.exec("ALTER TABLE ai_usage_entries ADD COLUMN estimation_method TEXT");
+  if (!columnExists(db, "ai_usage_entries", "source_connector")) db.exec("ALTER TABLE ai_usage_entries ADD COLUMN source_connector TEXT");
+  if (!columnExists(db, "ai_usage_entries", "source_id")) db.exec("ALTER TABLE ai_usage_entries ADD COLUMN source_id TEXT");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_usage_source_dedupe ON ai_usage_entries(project_id, source_connector, source_id) WHERE source_connector IS NOT NULL AND source_id IS NOT NULL");
 }
 
 export function initDb(dbPath = defaultDbPath) {
@@ -197,7 +205,9 @@ export function initDb(dbPath = defaultDbPath) {
       output_tokens INTEGER NOT NULL DEFAULT 0,
       cost_eur REAL NOT NULL DEFAULT 0,
       estimation_method TEXT,
-      used_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      used_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      source_connector TEXT,
+      source_id TEXT
     );
     CREATE TABLE IF NOT EXISTS usage_import_runs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -497,7 +507,8 @@ function normalizeUsageRecord(record: any, sourceName: string, fallbackDate: str
 function normalizeConnectorRecord(record: any, connector: UsageConnector, sourceName: string, fallbackDate: string): ParsedUsageCandidate | null {
   if (!record || typeof record !== "object") return null;
   if (connector === "generic") return normalizeUsageRecord(record, sourceName, fallbackDate);
-  const specs: Record<Exclude<UsageConnector, "generic">, { label: string; input: string[]; output: string[]; id: string[]; date: string[]; method: string; forceZeroCost?: boolean }> = {
+  if (connector === "hermes") throw new Error("Le connecteur HERMES local utilise importHermesLocalUsage");
+  const specs: Record<Exclude<UsageConnector, "generic" | "hermes">, { label: string; input: string[]; output: string[]; id: string[]; date: string[]; method: string; forceZeroCost?: boolean }> = {
     openai: { label: "OpenAI", input: ["usage.input_tokens", "usage.prompt_tokens", "input_tokens", "prompt_tokens"], output: ["usage.output_tokens", "usage.completion_tokens", "output_tokens", "completion_tokens"], id: ["id", "request_id", "response_id"], date: ["created_at", "created", "timestamp"], method: "openai_usage_connector" },
     anthropic: { label: "Anthropic", input: ["usage.input_tokens", "input_tokens"], output: ["usage.output_tokens", "output_tokens"], id: ["id", "message_id"], date: ["created_at", "createdAt", "timestamp"], method: "anthropic_usage_connector" },
     google: { label: "Google Gemini", input: ["usageMetadata.promptTokenCount", "usage_metadata.prompt_token_count", "promptTokenCount"], output: ["usageMetadata.candidatesTokenCount", "usage_metadata.candidates_token_count", "candidatesTokenCount"], id: ["responseId", "id", "name"], date: ["createTime", "created_at", "timestamp"], method: "google_usage_connector" },
@@ -584,6 +595,90 @@ function importParsedUsage(dbPath: string, userId: number, input: AutomaticUsage
       entries,
     };
   } finally { db.close(); }
+}
+
+function normalizeHermesDate(value: string | number | null | undefined) {
+  if (value == null || value === "") return new Date().toISOString().slice(0, 10);
+  if (typeof value === "number") return new Date(value > 10_000_000_000 ? value : value * 1000).toISOString().slice(0, 10);
+  const raw = String(value).trim();
+  const numeric = Number(raw);
+  if (Number.isFinite(numeric) && /^\d+(\.\d+)?$/.test(raw)) return normalizeHermesDate(numeric);
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? new Date().toISOString().slice(0, 10) : parsed.toISOString().slice(0, 10);
+}
+function hermesDbPath(input?: string) { return input?.trim() || process.env.HERMES_STATE_DB || defaultHermesStateDbPath; }
+function hermesProfileName(input?: string, dbPath?: string) {
+  if (input?.trim()) return input.trim();
+  const match = String(dbPath || "").match(/\/profiles\/([^/]+)\/state\.db$/);
+  return match?.[1] || "default";
+}
+function hermesCostEur(row: RawHermesSessionRow) {
+  const usd = toNonNegativeMoney(Number(row.actual_cost_usd ?? row.estimated_cost_usd ?? 0));
+  const usdToEur = Number(process.env.HERMES_USD_TO_EUR || 0.92);
+  return toNonNegativeMoney(usd * (Number.isFinite(usdToEur) && usdToEur > 0 ? usdToEur : 0.92));
+}
+function getOrCreateHermesSetup(db: DatabaseSync, userId: number, projectId: number, requestedSetupId?: number | null) {
+  if (!db.prepare("SELECT 1 FROM project_members WHERE user_id = ? AND project_id = ?").get(userId, projectId)) throw new Error("Accès projet refusé");
+  if (requestedSetupId) {
+    const setup = getSetupById(db, requestedSetupId);
+    if (setup.projectId !== projectId) throw new Error("Configuration IA hors projet");
+    if (!db.prepare("SELECT 1 FROM ai_accounts WHERE id = ? AND user_id = ?").get(setup.accountId, userId)) throw new Error("Compte IA refusé");
+    return setup;
+  }
+  const existing = db.prepare(`SELECT s.id, s.project_id as projectId, p.name as projectName, s.account_id as accountId, a.name as accountName, pr.name as providerName, s.model_id as modelId, m.name as modelName, s.connection_type as connectionType, a.subscription_name as subscriptionName, a.monthly_cost_eur as monthlyCostEur, s.input_price_per_million as inputPricePerMillion, s.output_price_per_million as outputPricePerMillion, s.label
+    FROM project_ai_setups s JOIN projects p ON p.id = s.project_id JOIN ai_accounts a ON a.id = s.account_id LEFT JOIN ai_providers pr ON pr.id = a.provider_id LEFT JOIN ai_models m ON m.id = s.model_id
+    WHERE s.project_id = ? AND a.user_id = ? AND lower(s.label) LIKE '%hermes%' ORDER BY s.id LIMIT 1`).get(projectId, userId) as RawSetupRow | undefined;
+  if (existing) return rowToSetup(existing);
+  let account = db.prepare("SELECT id FROM ai_accounts WHERE user_id = ? AND lower(name) LIKE '%hermes%' ORDER BY id LIMIT 1").get(userId) as { id: number } | undefined;
+  if (!account) {
+    const provider = db.prepare("SELECT id FROM ai_providers WHERE name = 'OpenAI' ORDER BY id LIMIT 1").get() as { id: number } | undefined;
+    const inserted = db.prepare("INSERT INTO ai_accounts(user_id, provider_id, name, connection_type, subscription_name, monthly_cost_eur, notes) VALUES (?, ?, 'HERMES Local', 'api', NULL, 0, 'Compte créé automatiquement pour import metadata-only depuis HERMES state.db')").run(userId, provider?.id ?? null);
+    account = { id: Number(inserted.lastInsertRowid) };
+  }
+  const model = db.prepare("SELECT id FROM ai_models WHERE api_model_id = 'gpt-4.1' OR name = 'GPT-4.1' ORDER BY id LIMIT 1").get() as { id: number } | undefined;
+  const result = db.prepare(`INSERT INTO project_ai_setups(project_id, account_id, model_id, connection_type, label, input_price_per_million, output_price_per_million)
+    SELECT ?, ?, ?, a.connection_type, 'HERMES Local Usage', m.input_price_per_million, m.output_price_per_million FROM ai_accounts a LEFT JOIN ai_models m ON m.id = ? WHERE a.id = ? AND a.user_id = ?`).run(projectId, account.id, model?.id ?? null, model?.id ?? null, account.id, userId);
+  return getSetupById(db, Number(result.lastInsertRowid));
+}
+export function previewHermesLocalUsage(hermesStateDbPath = defaultHermesStateDbPath, profileName?: string): HermesLocalUsagePreview {
+  const dbPath = hermesDbPath(hermesStateDbPath);
+  if (!existsSync(dbPath)) throw new Error("Base HERMES state.db introuvable");
+  const hdb = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const row = hdb.prepare(`SELECT count(*) as sessions, coalesce(sum(CASE WHEN coalesce(input_tokens,0)+coalesce(output_tokens,0)+coalesce(reasoning_tokens,0)+coalesce(cache_read_tokens,0)+coalesce(cache_write_tokens,0) > 0 THEN 1 ELSE 0 END),0) as importableSessions, coalesce(sum(input_tokens),0) as inputTokens, coalesce(sum(output_tokens),0) as outputTokens, coalesce(sum(cache_read_tokens),0) as cacheReadTokens, coalesce(sum(cache_write_tokens),0) as cacheWriteTokens, coalesce(sum(reasoning_tokens),0) as reasoningTokens, coalesce(sum(estimated_cost_usd),0) as estimatedCostUsd, coalesce(sum(actual_cost_usd),0) as actualCostUsd, min(started_at) as startedAt, max(coalesce(ended_at, started_at)) as endedAt FROM sessions`).get() as RawHermesPreviewRow;
+    return { dbPath, profileName: hermesProfileName(profileName, dbPath), sessions: Number(row.sessions ?? 0), importableSessions: Number(row.importableSessions ?? 0), inputTokens: Number(row.inputTokens ?? 0), outputTokens: Number(row.outputTokens ?? 0), cacheTokens: Number(row.cacheReadTokens ?? 0) + Number(row.cacheWriteTokens ?? 0), reasoningTokens: Number(row.reasoningTokens ?? 0), costUsd: toNonNegativeMoney(Number(row.actualCostUsd || row.estimatedCostUsd || 0)), startedAt: row.startedAt, endedAt: row.endedAt };
+  } finally { hdb.close(); }
+}
+export function importHermesLocalUsage(dbPath: string, userId: number, input: HermesLocalUsageImportInput): AutomaticUsageImportResult {
+  initDb(dbPath); seedDefaultProviders(dbPath);
+  const sourceDbPath = hermesDbPath(input.hermesDbPath);
+  const profile = hermesProfileName(input.profileName, sourceDbPath);
+  if (!existsSync(sourceDbPath)) throw new Error("Base HERMES state.db introuvable");
+  const db = open(dbPath);
+  const hdb = new DatabaseSync(sourceDbPath, { readOnly: true });
+  try {
+    const setup = getOrCreateHermesSetup(db, userId, input.projectId, input.setupId);
+    const rows = hdb.prepare(`SELECT id, source, model, started_at, ended_at, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, billing_provider, estimated_cost_usd, actual_cost_usd, api_call_count, tool_call_count FROM sessions WHERE coalesce(input_tokens,0)+coalesce(output_tokens,0)+coalesce(reasoning_tokens,0)+coalesce(cache_read_tokens,0)+coalesce(cache_write_tokens,0) > 0 ORDER BY coalesce(started_at, ended_at), id`).all() as RawHermesSessionRow[];
+    if (!rows.length) throw new Error("Aucune session HERMES importable détectée");
+    const entries: UsageEntry[] = [];
+    db.exec("BEGIN");
+    try {
+      for (const row of rows) {
+        const sourceId = `${profile}:${row.id}`;
+        if (db.prepare("SELECT 1 FROM ai_usage_entries WHERE project_id = ? AND source_connector = 'hermes' AND source_id = ?").get(input.projectId, sourceId)) continue;
+        const inputTokens = toNonNegativeInteger(Number(row.input_tokens ?? 0) + Number(row.cache_read_tokens ?? 0) + Number(row.cache_write_tokens ?? 0));
+        const outputTokens = toNonNegativeInteger(Number(row.output_tokens ?? 0) + Number(row.reasoning_tokens ?? 0));
+        const model = String(row.model || setup.modelName || "modèle").slice(0, 80);
+        const source = String(row.source || "session").slice(0, 40);
+        const label = `HERMES ${profile} · ${model} · ${source}`;
+        const result = db.prepare(`INSERT INTO ai_usage_entries(project_id, model_id, account_id, setup_id, label, input_tokens, output_tokens, cost_eur, estimation_method, used_at, source_connector, source_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'hermes_state_db_sessions', ?, 'hermes', ?)`).run(input.projectId, setup.modelId, setup.accountId, setup.id, label, inputTokens, outputTokens, hermesCostEur(row), normalizeHermesDate(row.ended_at ?? row.started_at), sourceId);
+        entries.push(usageById(db, Number(result.lastInsertRowid)));
+      }
+      db.prepare(`INSERT INTO usage_import_runs(user_id, project_id, setup_id, connector, source_path, status, imported_count, error_message) VALUES (?, ?, ?, 'hermes', ?, 'success', ?, NULL)`).run(userId, input.projectId, setup.id, sourceDbPath, entries.length);
+      db.exec("COMMIT");
+    } catch (error) { db.exec("ROLLBACK"); throw error; }
+    return { importedCount: entries.length, totalInputTokens: entries.reduce((sum, entry) => sum + entry.inputTokens, 0), totalOutputTokens: entries.reduce((sum, entry) => sum + entry.outputTokens, 0), totalCostEur: toNonNegativeMoney(entries.reduce((sum, entry) => sum + entry.costEur, 0)), entries };
+  } finally { hdb.close(); db.close(); }
 }
 
 export function importConnectorUsage(dbPath: string, userId: number, input: ConnectorUsageImportInput): AutomaticUsageImportResult {
@@ -845,3 +940,4 @@ export function listDashboardData(dbPath: string, userId: number, selectedProjec
 export const DB_PATH = defaultDbPath;
 export const USAGE_INBOX_DIR = defaultUsageInboxDir;
 export const USAGE_REPORTS_DIR = defaultUsageReportsDir;
+export const HERMES_STATE_DB_PATH = defaultHermesStateDbPath;

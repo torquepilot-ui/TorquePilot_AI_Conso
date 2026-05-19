@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -23,6 +24,8 @@ import {
   estimateTokensFromText,
   importAutomaticUsage,
   importConnectorUsage,
+  importHermesLocalUsage,
+  previewHermesLocalUsage,
   importUsageInbox,
   previewUsageInbox,
   getUsageCollectorHealth,
@@ -683,5 +686,71 @@ test("Phase 4H : agrégats graphiques isolés par projet et utilisateur", () => 
     assert.throws(() => buildUsageChartData(dbPath, other.id, project.id), /Accès projet refusé/);
   } finally {
     cleanup();
+  }
+});
+
+
+test("connecteur HERMES local : importe les métriques sessions sans doublons", () => {
+  const { dbPath, cleanup } = tempDb();
+  const hermesDir = mkdtempSync(join(tmpdir(), "tp-hermes-"));
+  const hermesDbPath = join(hermesDir, "state.db");
+  try {
+    initDb(dbPath);
+    seedDefaultProviders(dbPath);
+    const user = createUser(dbPath, "hermes@example.local", "secret-test");
+    const project = createProject(dbPath, user.id, "HERMES — Limule TEMPEST", "Compteur local");
+    const data = listDashboardData(dbPath, user.id, project.id);
+    const openai = data.providers.find((p) => p.name === "OpenAI") ?? data.providers[0];
+    const gpt = data.models.find((m) => m.name === "GPT-4.1") ?? data.models[0];
+    const account = createAiAccount(dbPath, user.id, { providerId: openai.id, name: "HERMES Local", connectionType: "api" });
+    const setup = assignAiAccountToProject(dbPath, user.id, { projectId: project.id, accountId: account.id, modelId: gpt.id, connectionType: "api", label: "HERMES Local Usage" });
+
+    const hdb = new DatabaseSync(hermesDbPath);
+    hdb.exec(`CREATE TABLE sessions (
+      id TEXT PRIMARY KEY,
+      source TEXT NOT NULL,
+      model TEXT,
+      started_at REAL NOT NULL,
+      ended_at REAL,
+      input_tokens INTEGER DEFAULT 0,
+      output_tokens INTEGER DEFAULT 0,
+      cache_read_tokens INTEGER DEFAULT 0,
+      cache_write_tokens INTEGER DEFAULT 0,
+      reasoning_tokens INTEGER DEFAULT 0,
+      billing_provider TEXT,
+      estimated_cost_usd REAL,
+      actual_cost_usd REAL,
+      api_call_count INTEGER DEFAULT 0,
+      tool_call_count INTEGER DEFAULT 0,
+      title TEXT,
+      system_prompt TEXT
+    );
+    CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, content TEXT);`);
+    hdb.prepare(`INSERT INTO sessions(id, source, model, started_at, ended_at, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, billing_provider, estimated_cost_usd, actual_cost_usd, api_call_count, tool_call_count, title, system_prompt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run("sess-1", "telegram", "gpt-4.1", 1770000000, 1770000060, 100, 50, 10, 5, 7, "openai", 0.01, 0.02, 2, 1, "Titre privé", "Prompt privé");
+    hdb.prepare(`INSERT INTO messages(session_id, content) VALUES (?, ?)`).run("sess-1", "contenu privé à ne jamais importer");
+    hdb.close();
+
+    const preview = previewHermesLocalUsage(hermesDbPath, "test");
+    assert.equal(preview.importableSessions, 1);
+    assert.equal(preview.inputTokens, 100);
+    assert.equal(preview.cacheTokens, 15);
+    assert.equal(preview.outputTokens, 50);
+    assert.equal(preview.reasoningTokens, 7);
+
+    const first = importHermesLocalUsage(dbPath, user.id, { projectId: project.id, setupId: setup.id, hermesDbPath, profileName: "test" });
+    assert.equal(first.importedCount, 1);
+    assert.equal(first.entries[0].inputTokens, 115);
+    assert.equal(first.entries[0].outputTokens, 57);
+    assert.equal(first.entries[0].usedAt, "2026-02-02");
+    assert.match(first.entries[0].label, /HERMES test · gpt-4\.1 · telegram/);
+
+    const second = importHermesLocalUsage(dbPath, user.id, { projectId: project.id, setupId: setup.id, hermesDbPath, profileName: "test" });
+    assert.equal(second.importedCount, 0);
+    const refreshed = listDashboardData(dbPath, user.id, project.id);
+    assert.equal(refreshed.usage.tokens, 172);
+  } finally {
+    cleanup();
+    rmSync(hermesDir, { recursive: true, force: true });
   }
 });
