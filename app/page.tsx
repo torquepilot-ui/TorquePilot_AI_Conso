@@ -1,7 +1,10 @@
 import { DB_PATH, USAGE_INBOX_DIR, USAGE_REPORTS_DIR, getUsageCollectorHealth, getUserById, listDashboardData, listSavedUsageReports, previewUsageInbox, seedDefaultProviders } from "../lib/db";
+import VisualDashboard from "../components/VisualDashboard";
+import AutoRefresh from "./AutoRefresh";
 import { currentUserId, registerAction, loginAction, logoutAction, createProjectAction, deleteProjectAction, updateProjectAction, createAiAccountAction, updateAiAccountAction, deleteAiAccountAction, assignAiSetupAction, updateAiSetupAction, deleteAiSetupAction, estimateUsageAction, importUsageAction, importInboxAction, deleteSavedReportAction, getOpenAiStatusAction } from "./actions";
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 
 function AuthScreen({ error }: { error?: string }) {
@@ -66,9 +69,11 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
   ];
 
   return <main className="shell">
+    <AutoRefresh intervalMs={10000} />
     <section className="hero"><div><p className="eyebrow">Connecté : {user.email}</p><h1>TorquePilot AI Conso</h1><p className="subtitle">Tableau de bord simplifié : 1) projet, 2) compte IA ou abonnement, 3) modèle associé, 4) import local sans clé API.</p></div><form action={logoutAction}><button className="ghost">Déconnexion</button></form></section>
     {params?.error && <p className="alert">{params.error}</p>}
     <section className="grid stats">{stats.map(([label, value, hint]) => <article className="card" key={label}><span>{label}</span><strong>{value}</strong><small>{hint}</small></article>)}</section>
+    <VisualDashboard agents={data.visualDashboard.agents} />
 
     <section className="layout">
       <article className="panel"><div className="sectionHeader"><div><p className="eyebrow">Espace projet</p><h2>{selectedProject ? selectedProject.name : "Aucun projet"}</h2></div>{selectedProject && <span className="pill">API {euro(data.projectUsage.cost)} · Abos {euro(data.projectUsage.subscriptionMonthly)}/mois</span>}</div>
@@ -152,12 +157,12 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
     <section className="layout usageLayout">
       <article className="panel"><div className="sectionHeader"><div><p className="eyebrow">Phase 4H</p><h2>Tendance consommation</h2></div>{data.usageCharts && <span className="pill">{data.usageCharts.totals.totalTokens.toLocaleString("fr-FR")} tok</span>}</div>
         {data.usageCharts && data.usageCharts.totals.entries ? <div className="chartStack">
-          <div className="chartSummary"><div><span>Entrées</span><strong>{data.usageCharts.totals.entries}</strong></div><div><span>Input</span><strong>{data.usageCharts.totals.inputTokens.toLocaleString("fr-FR")}</strong></div><div><span>Output</span><strong>{data.usageCharts.totals.outputTokens.toLocaleString("fr-FR")}</strong></div><div><span>Coût</span><strong>{euro(data.usageCharts.totals.costEur)}</strong></div></div>
+          <div className="chartSummary"><div><span>Entrées</span><strong>{data.usageCharts.totals.entries}</strong></div><div><span>Input</span><strong>{data.usageCharts.totals.inputTokens.toLocaleString("fr-FR")}</strong></div><div><span>Output</span><strong>{data.usageCharts.totals.outputTokens.toLocaleString("fr-FR")}</strong></div><div><span>Cache</span><strong>{data.usageCharts.totals.cacheTokens.toLocaleString("fr-FR")}</strong></div><div><span>Reasoning</span><strong>{data.usageCharts.totals.reasoningTokens.toLocaleString("fr-FR")}</strong></div><div><span>Coût estimé</span><strong>{euro(data.usageCharts.totals.costEur)}</strong></div></div>
           <div className="barChart">{data.usageCharts.daily.map((day) => <div className="barRow" key={day.date}><span>{day.date}</span><div className="barTrack"><i style={{ width: percent(day.maxRatio) }}></i></div><strong>{day.totalTokens.toLocaleString("fr-FR")} tok</strong></div>)}</div>
         </div> : <p className="muted">Aucune donnée locale à afficher pour ce projet.</p>}
       </article>
       <aside className="panel"><div className="sectionHeader"><div><p className="eyebrow">Répartition</p><h2>Top IA/modèles</h2></div></div>
-        {data.usageCharts && data.usageCharts.totals.entries ? <div className="chartStack"><div>{data.usageCharts.topProviders.map((item) => <div className="miniBar" key={item.name}><div><strong>{item.name}</strong><span>{item.totalTokens.toLocaleString("fr-FR")} tok · {euro(item.costEur)}</span></div><div className="barTrack"><i style={{ width: percent(item.maxRatio) }}></i></div></div>)}</div><div>{data.usageCharts.topModels.map((item) => <div className="miniBar" key={item.name}><div><strong>{item.name}</strong><span>{item.totalTokens.toLocaleString("fr-FR")} tok</span></div><div className="barTrack"><i style={{ width: percent(item.maxRatio) }}></i></div></div>)}</div></div> : <p className="muted">Les agrégats se remplissent après import/estimation locale.</p>}
+        {data.usageCharts && data.usageCharts.totals.entries ? <div className="chartStack"><div>{data.usageCharts.topProviders.map((item) => <div className="miniBar" key={item.name}><div><strong>{item.name}</strong><span>{item.totalTokens.toLocaleString("fr-FR")} tok · cache {item.cacheTokens.toLocaleString("fr-FR")} · rais. {item.reasoningTokens.toLocaleString("fr-FR")} · {euro(item.costEur)}</span></div><div className="barTrack"><i style={{ width: percent(item.maxRatio) }}></i></div></div>)}</div><div>{data.usageCharts.topModels.map((item) => <div className="miniBar" key={item.name}><div><strong>{item.name}</strong><span>{item.totalTokens.toLocaleString("fr-FR")} tok</span></div><div className="barTrack"><i style={{ width: percent(item.maxRatio) }}></i></div></div>)}</div></div> : <p className="muted">Les agrégats se remplissent après import/estimation locale.</p>}
       </aside>
     </section>
 
@@ -165,7 +170,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
       <article className="panel">
         <div className="sectionHeader"><div><p className="eyebrow">Rapport de consommation</p><h2>Historique automatique</h2></div>{selectedProject && <div className="reportActions"><a className="buttonLink" href={`/reports/usage?project=${selectedProject.id}&format=csv`}>Télécharger CSV</a><a className="buttonLink ghostLink" href={`/reports/usage?project=${selectedProject.id}&format=json`}>Sauvegarder JSON</a></div>}</div>
         <p className="muted">Les boutons génèrent un rapport tokens depuis SQLite, le téléchargent et en conservent une copie serveur dans <code>data/usage-reports</code>.</p>
-        <div className="list">{data.usageEntries.length ? data.usageEntries.map((e) => <div className="row compact" key={e.id}><div><h3>{e.label}</h3><p>{e.providerName || "IA"} · {e.modelName || "Modèle"} · {e.usedAt}</p></div><span className="pill">{e.totalTokens.toLocaleString("fr-FR")} tok · {euro(e.costEur)}</span></div>) : <p className="muted">Aucun usage collecté pour ce projet.</p>}</div>
+        <div className="list">{data.usageEntries.length ? data.usageEntries.map((e) => <div className="row compact" key={e.id}><div><h3>{e.label}</h3><p>{e.providerName || "IA"} · {e.modelName || "Modèle"} · {e.usedAt}</p></div><span className="pill">{e.totalTokens.toLocaleString("fr-FR")} tok · in {e.inputTokens.toLocaleString("fr-FR")} · out {e.outputTokens.toLocaleString("fr-FR")} · cache {e.cacheTokens.toLocaleString("fr-FR")} · rais. {e.reasoningTokens.toLocaleString("fr-FR")} · {euro(e.costEur)}</span></div>) : <p className="muted">Aucun usage collecté pour ce projet.</p>}</div>
         {data.totalUsageEntries > data.usagePageSize && (() => {
           const totalPages = Math.ceil(data.totalUsageEntries / data.usagePageSize);
           const base = selectedProject ? `/?project=${selectedProject.id}` : "/";
@@ -184,7 +189,9 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
           <label>Configuration IA<select name="setupId" required>{data.projectAiSetups.map((s) => <option value={s.id} key={s.id}>{s.label} — {connectionLabel(s.connectionType)}</option>)}</select></label>
           <label>Libellé<input name="label" placeholder="Ex: session debug, génération contenu" required /></label>
           <label>Texte entrée<textarea name="inputText" placeholder="Prompt/log entrée : tokens et coût seront calculés automatiquement" rows={4}></textarea></label>
-          <label>Texte sortie<textarea name="outputText" placeholder="Réponse/log sortie : aucune saisie manuelle de tokens/coût" rows={4}></textarea></label>
+          <label>Texte sortie<textarea name="outputText" placeholder="Réponse/log sortie : tokens et coût seront calculés automatiquement si les champs ci-dessous restent à 0" rows={4}></textarea></label>
+          <div className="inlineFields"><label>Input tokens<input name="inputTokens" type="number" min="0" placeholder="Auto" /></label><label>Output tokens<input name="outputTokens" type="number" min="0" placeholder="Auto" /></label></div>
+          <div className="inlineFields"><label>Cache tokens<input name="cacheTokens" type="number" min="0" placeholder="0" /></label><label>Reasoning tokens<input name="reasoningTokens" type="number" min="0" placeholder="0" /></label></div>
           <label>Date<input name="usedAt" type="date" defaultValue={new Date().toISOString().slice(0, 10)} /></label>
           <button>Estimer depuis texte</button>
           {!apiSetups.length && <p className="muted">Pour un abonnement, les tokens seront estimés mais le coût par requête reste à 0 €. Le coût mensuel est suivi côté abonnement.</p>}

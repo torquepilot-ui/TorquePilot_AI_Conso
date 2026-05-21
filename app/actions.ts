@@ -171,6 +171,10 @@ export async function estimateUsageAction(formData: FormData) {
       label: String(formData.get("label") || ""),
       inputText: String(formData.get("inputText") || ""),
       outputText: String(formData.get("outputText") || ""),
+      inputTokens: Number(formData.get("inputTokens") || 0),
+      outputTokens: Number(formData.get("outputTokens") || 0),
+      cacheTokens: Number(formData.get("cacheTokens") || 0),
+      reasoningTokens: Number(formData.get("reasoningTokens") || 0),
       usedAt: String(formData.get("usedAt") || ""),
     });
     revalidatePath("/");

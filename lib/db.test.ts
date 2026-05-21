@@ -29,6 +29,7 @@ import {
   buildUsageReport,
   saveUsageReportFile,
   buildUsageChartData,
+  buildVisualDashboardData,
   listSavedUsageReports,
   readSavedUsageReport,
   deleteSavedUsageReport,
@@ -215,6 +216,34 @@ test("modification et suppression des comptes IA et affectations projet", () => 
     const dashboard = listDashboardData(dbPath, user.id, project.id);
     assert.equal(dashboard.projectAiSetups.length, 0);
     assert.equal(dashboard.aiAccounts.length, 0);
+  } finally {
+    cleanup();
+  }
+});
+
+test("cockpit visuel agrège agents, radar normalisé, donut et modèles depuis SQLite", () => {
+  const { dbPath, cleanup } = tempDb();
+  try {
+    initDb(dbPath);
+    seedDefaultProviders(dbPath);
+    const user = createUser(dbPath, "visual@example.local", "secret-test");
+    const project = createProject(dbPath, user.id, "TorquePilot", "Cockpit");
+    const modelId = listDashboardData(dbPath, user.id).models[0].id;
+    recordUsageEntry(dbPath, user.id, { projectId: project.id, modelId, label: "HERMES default · gpt-5.5 · telegram", inputTokens: 1000, outputTokens: 500, cacheTokens: 200, reasoningTokens: 50, costEur: 0.123456, usedAt: "2026-05-20" });
+    recordUsageEntry(dbPath, user.id, { projectId: project.id, modelId, label: "BEES LAB · claude-sonnet · telegram", inputTokens: 400, outputTokens: 100, cacheTokens: 0, reasoningTokens: 10, costEur: 0.02, usedAt: "2026-05-19" });
+
+    const visual = buildVisualDashboardData(dbPath, user.id, project.id);
+    assert.equal(visual.agents.length, 2);
+    const hermes = visual.agents.find((agent) => agent.name === "HERMES")!;
+    assert.ok(hermes);
+    assert.equal(hermes.radar.input, 100);
+    assert.equal(hermes.radar.output, 100);
+    assert.equal(hermes.radar.cost, 100);
+    assert.deepEqual(hermes.donut.map((item) => item.label), ["Input", "Output", "Cache", "Reasoning"]);
+    assert.equal(hermes.models[0].name, "gpt-5.5");
+    assert.equal(hermes.models[0].tokens, 1500);
+    assert.equal(hermes.models[0].lastUsed, "2026-05-20");
+    assert.equal(listDashboardData(dbPath, user.id, project.id).visualDashboard.agents.length, 2);
   } finally {
     cleanup();
   }
@@ -593,7 +622,7 @@ test("Phase 4F : rapport consommation exportable CSV et sauvegardé", () => {
     assert.equal(report.totals.totalTokens, 1500);
     assert.equal(report.totals.inputTokens, 1200);
     assert.equal(report.totals.outputTokens, 300);
-    assert.match(report.content, /date,projet,fournisseur,modele,libelle,input_tokens,output_tokens,total_tokens,cost_eur/);
+    assert.match(report.content, /date,projet,fournisseur,modele,libelle,input_tokens,output_tokens,cache_tokens,reasoning_tokens,total_tokens,cost_eur/);
     assert.match(report.content, /resp_report/);
     assert.equal(report.mimeType, "text/csv; charset=utf-8");
     assert.throws(() => buildUsageReport(dbPath, other.id, project.id, "csv"), /Accès projet refusé/);
@@ -663,9 +692,9 @@ test("Phase 4H : agrégats graphiques isolés par projet et utilisateur", () => 
     const setup = assignAiAccountToProject(dbPath, user.id, { projectId: project.id, accountId: account.id, modelId: gpt.id, connectionType: "api" });
     const otherSetup = assignAiAccountToProject(dbPath, user.id, { projectId: otherProject.id, accountId: account.id, modelId: gpt.id, connectionType: "api" });
 
-    importConnectorUsage(dbPath, user.id, { connector: "openai", projectId: project.id, setupId: setup.id, sourceName: "jour 1", usedAt: "2026-05-08", rawExport: JSON.stringify({ id: "a", usage: { input_tokens: 1000, output_tokens: 500 } }) });
-    importConnectorUsage(dbPath, user.id, { connector: "openai", projectId: project.id, setupId: setup.id, sourceName: "jour 2", usedAt: "2026-05-09", rawExport: JSON.stringify({ id: "b", usage: { input_tokens: 2000, output_tokens: 1000 } }) });
-    importConnectorUsage(dbPath, user.id, { connector: "openai", projectId: otherProject.id, setupId: otherSetup.id, sourceName: "hors scope", usedAt: "2026-05-09", rawExport: JSON.stringify({ id: "c", usage: { input_tokens: 9000, output_tokens: 9000 } }) });
+    importConnectorUsage(dbPath, user.id, { connector: "openai", projectId: project.id, setupId: setup.id, sourceName: "jour 1", usedAt: "2026-05-08", rawExport: JSON.stringify({ id: "a", usage: { input_tokens: 1000, output_tokens: 500, input_tokens_details: { cached_tokens: 300 }, output_tokens_details: { reasoning_tokens: 80 } } }) });
+    importConnectorUsage(dbPath, user.id, { connector: "openai", projectId: project.id, setupId: setup.id, sourceName: "jour 2", usedAt: "2026-05-09", rawExport: JSON.stringify({ id: "b", usage: { input_tokens: 2000, output_tokens: 1000, input_tokens_details: { cached_tokens: 500 }, output_tokens_details: { reasoning_tokens: 120 } } }) });
+    importConnectorUsage(dbPath, user.id, { connector: "openai", projectId: otherProject.id, setupId: otherSetup.id, sourceName: "hors scope", usedAt: "2026-05-09", rawExport: JSON.stringify({ id: "c", usage: { input_tokens: 9000, output_tokens: 9000, input_tokens_details: { cached_tokens: 9000 }, output_tokens_details: { reasoning_tokens: 9000 } } }) });
 
     const charts = buildUsageChartData(dbPath, user.id, project.id);
 
@@ -673,12 +702,15 @@ test("Phase 4H : agrégats graphiques isolés par projet et utilisateur", () => 
     assert.equal(charts.totals.entries, 2);
     assert.equal(charts.totals.inputTokens, 3000);
     assert.equal(charts.totals.outputTokens, 1500);
+    assert.equal(charts.totals.cacheTokens, 800);
+    assert.equal(charts.totals.reasoningTokens, 200);
     assert.equal(charts.totals.totalTokens, 4500);
     assert.equal(charts.daily.length, 2);
-    assert.deepEqual(charts.daily.map((d) => [d.date, d.totalTokens]), [["2026-05-08", 1500], ["2026-05-09", 3000]]);
+    assert.deepEqual(charts.daily.map((d) => [d.date, d.totalTokens, d.cacheTokens, d.reasoningTokens]), [["2026-05-08", 1500, 300, 80], ["2026-05-09", 3000, 500, 120]]);
     assert.equal(charts.daily[1].maxRatio, 1);
     assert.equal(charts.topProviders[0].name, "OpenAI");
     assert.equal(charts.topProviders[0].totalTokens, 4500);
+    assert.equal(charts.topProviders[0].cacheTokens, 800);
     assert.equal(charts.topModels[0].name, "GPT-4.1");
     assert.throws(() => buildUsageChartData(dbPath, other.id, project.id), /Accès projet refusé/);
   } finally {
