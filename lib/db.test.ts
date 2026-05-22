@@ -418,6 +418,39 @@ test("Phase 4B : import automatique texte brut estime les tokens sans coût manu
   }
 });
 
+test("Fallback connecté : import automatique accepte JSON générique et texte brut", () => {
+  const { dbPath, cleanup } = tempDb();
+  try {
+    initDb(dbPath);
+    seedDefaultProviders(dbPath);
+    const user = createUser(dbPath, "rudy@example.local", "secret-test");
+    const project = createProject(dbPath, user.id, "TorquePilot fallback", "Secours universel");
+    const data = listDashboardData(dbPath, user.id);
+    const openai = data.providers.find((p) => p.name === "OpenAI")!;
+    const gpt = data.models.find((m) => m.name === "GPT-4.1")!;
+    const account = createAiAccount(dbPath, user.id, { providerId: openai.id, name: "Fallback API", connectionType: "api" });
+    const setup = assignAiAccountToProject(dbPath, user.id, { projectId: project.id, accountId: account.id, modelId: gpt.id, connectionType: "api" });
+
+    const genericJson = JSON.stringify({ label: "fallback json", input_tokens: 1000, output_tokens: 250, cache_tokens: 50, reasoning_tokens: 25, used_at: "2026-05-10" });
+    const jsonResult = importAutomaticUsage(dbPath, user.id, { projectId: project.id, setupId: setup.id, sourceName: "Fallback JSON", rawExport: genericJson, usedAt: "2026-05-09" });
+    assert.equal(jsonResult.importedCount, 1);
+    assert.equal(jsonResult.totalInputTokens, 1000);
+    assert.equal(jsonResult.totalOutputTokens, 250);
+    assert.equal(jsonResult.entries[0].cacheTokens, 50);
+    assert.equal(jsonResult.entries[0].reasoningTokens, 25);
+    assert.equal(jsonResult.entries[0].usedAt, "2026-05-10");
+    assert.equal(jsonResult.totalCostEur, 0.004);
+
+    const textResult = importAutomaticUsage(dbPath, user.id, { projectId: project.id, setupId: setup.id, sourceName: "Fallback texte", rawExport: `User: ${"a".repeat(120)}\nAssistant: ${"b".repeat(240)}`, usedAt: "2026-05-11" });
+    assert.equal(textResult.importedCount, 1);
+    assert.ok(textResult.totalInputTokens > 0);
+    assert.ok(textResult.totalOutputTokens > 0);
+    assert.equal(textResult.entries[0].usedAt, "2026-05-11");
+  } finally {
+    cleanup();
+  }
+});
+
 test("Phase 4C : connecteur OpenAI importe un export réel Responses/usage", () => {
   const { dbPath, cleanup } = tempDb();
   try {

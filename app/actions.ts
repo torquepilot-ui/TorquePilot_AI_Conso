@@ -8,7 +8,7 @@ import {
   DB_PATH, USAGE_INBOX_DIR, USAGE_REPORTS_DIR,
   assignAiAccountToProject, createAiAccount, createProject, createUser,
   deleteAiAccount, deleteProject, deleteProjectAiSetup, deleteSavedUsageReport,
-  estimateProjectUsage, importConnectorUsage, importUsageInbox,
+  estimateProjectUsage, importAutomaticUsage, importConnectorUsage, importUsageInbox,
   updateAiAccount, updateProject, updateProjectAiSetup, verifyUser,
 } from "../lib/db";
 import { checkProviderConnection, type ProviderConnectionStatus } from "../lib/provider-api";
@@ -197,6 +197,25 @@ export async function importUsageAction(formData: FormData) {
     });
     revalidatePath("/");
   } catch (err) { console.error("[importUsageAction]", err); redirect(`/?project=${projectId || ""}&error=Import automatique refusé`); }
+  redirect(`/?project=${projectId}`);
+}
+
+export async function importFallbackUsageAction(formData: FormData) {
+  const userId = await currentUserId();
+  if (!userId) redirect("/");
+  const projectId = Number(formData.get("projectId") || 0);
+  const label = String(formData.get("label") || "").trim();
+  const rawExport = String(formData.get("rawExport") || "").trim();
+  try {
+    importAutomaticUsage(DB_PATH, userId, {
+      projectId,
+      setupId: Number(formData.get("setupId") || 0),
+      sourceName: label || "Fallback conversation isolée",
+      rawExport,
+      usedAt: String(formData.get("usedAt") || ""),
+    });
+    revalidatePath("/");
+  } catch (err) { console.error("[importFallbackUsageAction]", err); redirect(`/?project=${projectId || ""}&error=Fallback import refusé`); }
   redirect(`/?project=${projectId}`);
 }
 

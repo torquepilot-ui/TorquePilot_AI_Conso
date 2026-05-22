@@ -1,7 +1,7 @@
 import { DB_PATH, USAGE_INBOX_DIR, USAGE_REPORTS_DIR, USAGE_TIME_RANGES, getUsageCollectorHealth, getUserById, listDashboardData, listSavedUsageReports, normalizeUsageTimeRange, previewUsageInbox, seedDefaultProviders } from "../lib/db";
 import VisualDashboard from "../components/VisualDashboard";
 import AutoRefresh from "./AutoRefresh";
-import { currentUserId, registerAction, loginAction, logoutAction, createProjectAction, deleteProjectAction, updateProjectAction, createAiAccountAction, updateAiAccountAction, deleteAiAccountAction, assignAiSetupAction, updateAiSetupAction, deleteAiSetupAction, estimateUsageAction, importUsageAction, importInboxAction, deleteSavedReportAction, getOpenAiStatusAction } from "./actions";
+import { currentUserId, registerAction, loginAction, logoutAction, createProjectAction, deleteProjectAction, updateProjectAction, createAiAccountAction, updateAiAccountAction, deleteAiAccountAction, assignAiSetupAction, updateAiSetupAction, deleteAiSetupAction, importUsageAction, importFallbackUsageAction, importInboxAction, deleteSavedReportAction, getOpenAiStatusAction } from "./actions";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -67,7 +67,6 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
   const collectorPreview = previewUsageInbox(USAGE_INBOX_DIR);
   const savedReports = listSavedUsageReports(USAGE_REPORTS_DIR);
   const selectedProject = data.selectedProject;
-  const apiSetups = data.projectAiSetups.filter((s) => s.connectionType === "api");
   const openAiStatus = await getOpenAiStatusAction();
   const categoryCounts = data.models.reduce<Record<string, number>>((acc, model) => { acc[model.category] = (acc[model.category] || 0) + 1; return acc; }, {});
   const stats = [
@@ -192,18 +191,15 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
     </section>
 
     <section className="layout usageLayout">
-      <aside className="panel"><div className="sectionHeader"><div><p className="eyebrow">Fallback temporaire</p><h2>Conversation isolée</h2></div></div>
-        {selectedProject && data.projectAiSetups.length ? <form action={estimateUsageAction} className="usageForm">
+      <aside className="panel"><div className="sectionHeader"><div><p className="eyebrow">Fallback connecté</p><h2>Import secours universel</h2></div><span className="pill">sans clé API</span></div>
+        {selectedProject && data.projectAiSetups.length ? <form action={importFallbackUsageAction} className="usageForm">
           <input type="hidden" name="projectId" value={selectedProject.id} />
           <label>Configuration IA<select name="setupId" required>{data.projectAiSetups.map((s) => <option value={s.id} key={s.id}>{s.label} — {connectionLabel(s.connectionType)}</option>)}</select></label>
-          <label>Libellé<input name="label" placeholder="Ex: session debug, génération contenu" required /></label>
-          <label>Texte entrée<textarea name="inputText" placeholder="Prompt/log entrée : tokens et coût seront calculés automatiquement" rows={4}></textarea></label>
-          <label>Texte sortie<textarea name="outputText" placeholder="Réponse/log sortie : tokens et coût seront calculés automatiquement si les champs ci-dessous restent à 0" rows={4}></textarea></label>
-          <div className="inlineFields"><label>Input tokens<input name="inputTokens" type="number" min="0" placeholder="Auto" /></label><label>Output tokens<input name="outputTokens" type="number" min="0" placeholder="Auto" /></label></div>
-          <div className="inlineFields"><label>Cache tokens<input name="cacheTokens" type="number" min="0" placeholder="0" /></label><label>Reasoning tokens<input name="reasoningTokens" type="number" min="0" placeholder="0" /></label></div>
-          <label>Date<input name="usedAt" type="date" defaultValue={new Date().toISOString().slice(0, 10)} /></label>
-          <button>Estimer depuis texte</button>
-          {!apiSetups.length && <p className="muted">Pour un abonnement, les tokens seront estimés mais le coût par requête reste à 0 €. Le coût mensuel est suivi côté abonnement.</p>}
+          <label>Libellé/source<input name="label" placeholder="Ex: session debug, génération contenu, log inconnu" defaultValue="Fallback conversation isolée" /></label>
+          <label>Conversation / JSON / log brut<textarea name="rawExport" placeholder={'Fallback texte :\nUser: prompt ou log entrée\nAssistant: réponse ou log sortie\n\nOu JSON générique : {"input_tokens":1200,"output_tokens":350,"cache_tokens":80,"reasoning_tokens":20,"used_at":"2026-05-22"}'} rows={8} required></textarea></label>
+          <label>Date par défaut<input name="usedAt" type="date" defaultValue={new Date().toISOString().slice(0, 10)} /></label>
+          <button>Importer via fallback</button>
+          <p className="muted">Le fallback tente d’abord JSON/JSONL générique, puis bascule sur l’estimation texte <code>User:</code>/<code>Assistant:</code>. Coût calculé depuis la configuration sélectionnée ; aucun secret n’est lu ni stocké.</p>
         </form> : <p className="muted">Affecte d’abord un compte IA au projet.</p>}
       </aside>
     </section>
