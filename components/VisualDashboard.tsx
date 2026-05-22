@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { VisualDashboardAgent } from "../lib/db";
+import type { UsageTimeRange, VisualDashboardAgent } from "../lib/db";
 
-type Props = { agents: VisualDashboardAgent[] };
+type Props = { agents: VisualDashboardAgent[]; timeRange: UsageTimeRange };
 type Page = "radar" | "donut" | "models";
 
 const STORAGE_PAGE_KEY = "torquepilot.visualDashboard.page";
@@ -171,7 +171,9 @@ function ModelsPage({ agents }: { agents: VisualDashboardAgent[] }) {
   </section>;
 }
 
-export default function VisualDashboard({ agents }: Props) {
+const RANGE_LABELS: Record<UsageTimeRange, string> = { "24h": "24h", "7d": "7j", "30d": "30j", all: "All-time" };
+
+export default function VisualDashboard({ agents, timeRange }: Props) {
   const [hydrated, setHydrated] = useState(false);
   const [page, setPageState] = useState<Page>("radar");
   const [activeIds, setActiveIds] = useState<string[]>(() => agents.map((agent) => agent.id));
@@ -218,8 +220,8 @@ export default function VisualDashboard({ agents }: Props) {
     <Sidebar page={page} setPage={setPage} agents={agents} activeIds={activeIds} toggleAgent={toggleAgent} showAll={showAll} hideAll={hideAll} />
     <div className="visualContent">
       <div className="visualTopbar">
-        <div><p className="visualKicker">Cockpit / Visualisation</p><h2>Vue exécutive consommation IA</h2><small>Données réelles SQLite · auto-refresh actif · accès VPN prêt</small></div>
-        <div className="visualStatus"><span />Live sandbox</div>
+        <div><p className="visualKicker">Cockpit / Visualisation</p><h2>Vue exécutive consommation IA</h2><small>Données réelles SQLite · période {RANGE_LABELS[timeRange]} · auto-refresh actif · accès VPN prêt</small></div>
+        <div className="visualStatus"><span />{RANGE_LABELS[timeRange]}</div>
       </div>
       <SummaryCards agents={agents} activeAgents={activeAgents} />
       {page === "radar" && <RadarPage agents={activeAgents} allAgents={agents} />}

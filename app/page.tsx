@@ -1,4 +1,4 @@
-import { DB_PATH, USAGE_INBOX_DIR, USAGE_REPORTS_DIR, getUsageCollectorHealth, getUserById, listDashboardData, listSavedUsageReports, previewUsageInbox, seedDefaultProviders } from "../lib/db";
+import { DB_PATH, USAGE_INBOX_DIR, USAGE_REPORTS_DIR, USAGE_TIME_RANGES, getUsageCollectorHealth, getUserById, listDashboardData, listSavedUsageReports, normalizeUsageTimeRange, previewUsageInbox, seedDefaultProviders } from "../lib/db";
 import VisualDashboard from "../components/VisualDashboard";
 import AutoRefresh from "./AutoRefresh";
 import { currentUserId, registerAction, loginAction, logoutAction, createProjectAction, deleteProjectAction, updateProjectAction, createAiAccountAction, updateAiAccountAction, deleteAiAccountAction, assignAiSetupAction, updateAiSetupAction, deleteAiSetupAction, estimateUsageAction, importUsageAction, importInboxAction, deleteSavedReportAction, getOpenAiStatusAction } from "./actions";
@@ -35,6 +35,14 @@ function connectionLabel(value: string) { return value === "api" ? "API" : value
 function fileSize(bytes: number) { return bytes < 1024 ? `${bytes} o` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} Ko` : `${(bytes / 1024 / 1024).toFixed(1)} Mo`; }
 function shortDate(value: string) { return new Date(value).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" }); }
 function percent(value: number) { return `${Math.max(3, Math.round(value * 100))}%`; }
+function dashboardHref(projectId: number | undefined | null, range: string, page?: number) {
+  const params = new URLSearchParams();
+  if (projectId) params.set("project", String(projectId));
+  if (range !== "all") params.set("range", range);
+  if (page && page > 1) params.set("page", String(page));
+  const query = params.toString();
+  return query ? `/?${query}` : "/";
+}
 const connectorOptions = [
   ["generic", "Auto générique JSON/JSONL"],
   ["openai", "OpenAI Responses/ChatCompletions"],
@@ -44,7 +52,7 @@ const connectorOptions = [
   ["local", "Local JSONL générique coût 0 €"],
 ];
 
-export default async function Home({ searchParams }: { searchParams?: Promise<{ error?: string; project?: string; page?: string }> }) {
+export default async function Home({ searchParams }: { searchParams?: Promise<{ error?: string; project?: string; page?: string; range?: string }> }) {
   seedDefaultProviders(DB_PATH);
   const params = await searchParams;
   const userId = await currentUserId();
@@ -53,7 +61,8 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
 
   const selectedProjectId = params?.project ? Number(params.project) : undefined;
   const page = params?.page ? Math.max(1, Number(params.page)) : 1;
-  const data = listDashboardData(DB_PATH, user.id, selectedProjectId, page);
+  const timeRange = normalizeUsageTimeRange(params?.range);
+  const data = listDashboardData(DB_PATH, user.id, selectedProjectId, page, timeRange);
   const collectorHealth = getUsageCollectorHealth(DB_PATH, user.id, USAGE_INBOX_DIR);
   const collectorPreview = previewUsageInbox(USAGE_INBOX_DIR);
   const savedReports = listSavedUsageReports(USAGE_REPORTS_DIR);
@@ -73,7 +82,8 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
     <section className="hero"><div><p className="eyebrow">Connecté : {user.email}</p><h1>TorquePilot AI Conso</h1><p className="subtitle">Tableau de bord simplifié : 1) projet, 2) compte IA ou abonnement, 3) modèle associé, 4) import local sans clé API.</p></div><form action={logoutAction}><button className="ghost">Déconnexion</button></form></section>
     {params?.error && <p className="alert">{params.error}</p>}
     <section className="grid stats">{stats.map(([label, value, hint]) => <article className="card" key={label}><span>{label}</span><strong>{value}</strong><small>{hint}</small></article>)}</section>
-    <VisualDashboard agents={data.visualDashboard.agents} />
+    <section className="panel timeRangePanel"><div><p className="eyebrow">Période active</p><h2>Filtre données SQLite</h2><p className="muted">Radar, donut, modèles, tendances et liste d’usage reflètent la période sélectionnée.</p></div><div className="rangeTabs">{USAGE_TIME_RANGES.map((range) => <a key={range.id} className={`rangeTab ${timeRange === range.id ? "active" : ""}`} href={dashboardHref(selectedProject?.id ?? selectedProjectId, range.id)} title={range.hint}>{range.label}</a>)}</div></section>
+    <VisualDashboard agents={data.visualDashboard.agents} timeRange={data.visualDashboard.timeRange} />
 
     <section className="layout">
       <article className="panel"><div className="sectionHeader"><div><p className="eyebrow">Espace projet</p><h2>{selectedProject ? selectedProject.name : "Aucun projet"}</h2></div>{selectedProject && <span className="pill">API {euro(data.projectUsage.cost)} · Abos {euro(data.projectUsage.subscriptionMonthly)}/mois</span>}</div>
@@ -93,7 +103,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
                 <small>Supprime les affectations IA et l'historique d'usage.</small>
               </form>
             </details>
-          : <a className="tab" href={`/?project=${p.id}`} key={p.id}><strong>{p.name}</strong><small>{p.description || "Sans description"}</small></a>
+          : <a className="tab" href={dashboardHref(p.id, timeRange)} key={p.id}><strong>{p.name}</strong><small>{p.description || "Sans description"}</small></a>
         ) : <p className="muted">Dashboard vierge : ajoute ton premier projet.</p>}</div>
       </article>
       <aside className="panel"><h2>Catalogue IA automatique</h2><p className="muted">Catalogue local : {data.models.length} modèles · {Object.entries(categoryCounts).map(([cat, count]) => `${categoryLabel(cat)} ${count}`).join(" · ")}</p><ul className="tasks">{data.models.slice(0, 14).map((m) => <li key={m.id}><span>{m.providerName} · {categoryLabel(m.category)}</span><strong>{m.name}</strong><small>{modelPriceDetail(m)}</small></li>)}</ul></aside>
@@ -173,9 +183,8 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
         <div className="list">{data.usageEntries.length ? data.usageEntries.map((e) => <div className="row compact" key={e.id}><div><h3>{e.label}</h3><p>{e.providerName || "IA"} · {e.modelName || "Modèle"} · {e.usedAt}</p></div><span className="pill">{e.totalTokens.toLocaleString("fr-FR")} tok · in {e.inputTokens.toLocaleString("fr-FR")} · out {e.outputTokens.toLocaleString("fr-FR")} · cache {e.cacheTokens.toLocaleString("fr-FR")} · rais. {e.reasoningTokens.toLocaleString("fr-FR")} · {euro(e.costEur)}</span></div>) : <p className="muted">Aucun usage collecté pour ce projet.</p>}</div>
         {data.totalUsageEntries > data.usagePageSize && (() => {
           const totalPages = Math.ceil(data.totalUsageEntries / data.usagePageSize);
-          const base = selectedProject ? `/?project=${selectedProject.id}` : "/";
-          const prevHref = data.usagePage > 1 ? `${base}&page=${data.usagePage - 1}` : null;
-          const nextHref = data.usagePage < totalPages ? `${base}&page=${data.usagePage + 1}` : null;
+          const prevHref = data.usagePage > 1 ? dashboardHref(selectedProject?.id, timeRange, data.usagePage - 1) : null;
+          const nextHref = data.usagePage < totalPages ? dashboardHref(selectedProject?.id, timeRange, data.usagePage + 1) : null;
           return <div className="pagination"><span className="muted">Page {data.usagePage}/{totalPages} · {data.totalUsageEntries} entrées</span><div className="paginationLinks">{prevHref ? <a className="buttonLink ghostLink" href={prevHref}>← Précédent</a> : null}{nextHref ? <a className="buttonLink ghostLink" href={nextHref}>Suivant →</a> : null}</div></div>;
         })()}
       </article>

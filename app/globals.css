@@ -433,6 +433,12 @@ button {
 .visualTopbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 18px 20px; background: linear-gradient(135deg, rgba(255,255,255,.075), rgba(255,255,255,.025)); }
 .visualStatus { display: inline-flex; align-items: center; gap: 8px; padding: 9px 12px; border: 1px solid rgba(0,255,178,.22); border-radius: 999px; color: #B8FFE9; background: rgba(0,255,178,.07); font-weight: 800; white-space: nowrap; }
 .visualStatus span { width: 8px; height: 8px; border-radius: 999px; background: #00FFB2; box-shadow: 0 0 16px #00FFB2; }
+.timeRangePanel { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin: 18px 0; }
+.timeRangePanel h2, .timeRangePanel p { margin-bottom: 0; }
+.rangeTabs { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
+.rangeTab { display: inline-flex; align-items: center; justify-content: center; min-width: 74px; padding: 10px 14px; border: 1px solid rgba(255,255,255,.12); border-radius: 999px; color: rgba(237,245,255,.78); background: rgba(255,255,255,.035); font-weight: 900; text-decoration: none; }
+.rangeTab:hover { border-color: rgba(0,255,178,.32); color: #fff; background: rgba(0,255,178,.07); }
+.rangeTab.active { border-color: rgba(0,255,178,.5); color: #B8FFE9; background: linear-gradient(135deg, rgba(0,255,178,.18), rgba(56,182,255,.12)); box-shadow: 0 0 24px rgba(0,255,178,.09); }
 .visualSummaryGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .visualSummaryGrid article { padding: 16px; min-width: 0; }
 .visualSummaryGrid span { display: block; color: rgba(237,245,255,.62); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
@@ -471,7 +477,9 @@ button {
 @media (max-width: 900px) {
   .visualDashboard, .visualRadarGrid, .visualDonutGrid, .visualTable article, .visualTableHead { grid-template-columns: 1fr; }
   .visualSidebar { position: static; min-height: auto; }
-  .visualHeader, .visualTopbar { flex-direction: column; }
+  .visualHeader, .visualTopbar, .timeRangePanel { flex-direction: column; align-items: stretch; }
+  .rangeTabs { justify-content: stretch; }
+  .rangeTab { flex: 1 1 110px; }
   .visualStatus { width: 100%; justify-content: center; }
 }
 @media (max-width: 620px) {

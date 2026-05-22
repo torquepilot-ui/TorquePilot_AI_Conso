@@ -86,7 +86,14 @@ export type SavedUsageReportSummary = { fileName: string; format: UsageReportFor
 export type DownloadedUsageReport = { fileName: string; format: UsageReportFormat; mimeType: string; sizeBytes: number; content: string };
 export type UsageChartPoint = { date: string; inputTokens: number; outputTokens: number; cacheTokens: number; reasoningTokens: number; totalTokens: number; costEur: number; entries: number; maxRatio: number };
 export type UsageChartBreakdown = { name: string; inputTokens: number; outputTokens: number; cacheTokens: number; reasoningTokens: number; totalTokens: number; costEur: number; entries: number; maxRatio: number };
-export type UsageChartData = { projectId: number; projectName: string; totals: { entries: number; inputTokens: number; outputTokens: number; cacheTokens: number; reasoningTokens: number; totalTokens: number; costEur: number }; daily: UsageChartPoint[]; topProviders: UsageChartBreakdown[]; topModels: UsageChartBreakdown[] };
+export type UsageTimeRange = "24h" | "7d" | "30d" | "all";
+export const USAGE_TIME_RANGES: { id: UsageTimeRange; label: string; hint: string }[] = [
+  { id: "24h", label: "24h", hint: "dernières 24 heures" },
+  { id: "7d", label: "7j", hint: "7 derniers jours" },
+  { id: "30d", label: "30j", hint: "30 derniers jours" },
+  { id: "all", label: "All-time", hint: "historique complet" },
+];
+export type UsageChartData = { projectId: number; projectName: string; timeRange: UsageTimeRange; totals: { entries: number; inputTokens: number; outputTokens: number; cacheTokens: number; reasoningTokens: number; totalTokens: number; costEur: number }; daily: UsageChartPoint[]; topProviders: UsageChartBreakdown[]; topModels: UsageChartBreakdown[] };
 export type VisualDashboardAgent = {
   id: string;
   name: string;
@@ -96,7 +103,7 @@ export type VisualDashboardAgent = {
   donut: { label: string; value: number; color: string; pct: number }[];
   models: { name: string; tokens: number; cost: number; sessions: number; lastUsed: string }[];
 };
-export type VisualDashboardData = { agents: VisualDashboardAgent[] };
+export type VisualDashboardData = { timeRange: UsageTimeRange; agents: VisualDashboardAgent[] };
 
 // Private raw SQLite row types — never exported
 type PragmaInfoRow = { name: string };
@@ -831,28 +838,41 @@ function withMaxRatio<T extends { totalTokens: number }>(rows: T[]) {
   const maxTokens = Math.max(0, ...rows.map((row) => row.totalTokens));
   return rows.map((row) => ({ ...row, maxRatio: maxTokens > 0 ? row.totalTokens / maxTokens : 0 }));
 }
-function _buildUsageChartData(db: DatabaseSync, userId: number, projectId: number): UsageChartData {
+export function normalizeUsageTimeRange(value?: string | null): UsageTimeRange {
+  return value === "24h" || value === "7d" || value === "30d" || value === "all" ? value : "all";
+}
+function usageTimeFilter(column: string, timeRange?: UsageTimeRange) {
+  const range = normalizeUsageTimeRange(timeRange);
+  if (range === "24h") return { range, clause: ` AND datetime(${column}) >= datetime('now', '-1 day')` };
+  if (range === "7d") return { range, clause: ` AND date(${column}) >= date('now', '-6 days')` };
+  if (range === "30d") return { range, clause: ` AND date(${column}) >= date('now', '-29 days')` };
+  return { range, clause: "" };
+}
+function _buildUsageChartData(db: DatabaseSync, userId: number, projectId: number, timeRange: UsageTimeRange = "all"): UsageChartData {
   const project = db.prepare(`SELECT p.id, p.name FROM projects p JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ? WHERE p.id = ?`).get(userId, projectId) as RawProjectRow | undefined;
   if (!project) throw new Error("Accès projet refusé");
-  const totalsRow = db.prepare(`SELECT count(*) as entries, coalesce(sum(input_tokens),0) as inputTokens, coalesce(sum(output_tokens),0) as outputTokens, coalesce(sum(cache_tokens),0) as cacheTokens, coalesce(sum(reasoning_tokens),0) as reasoningTokens, coalesce(sum(input_tokens + output_tokens),0) as totalTokens, coalesce(sum(cost_eur),0) as costEur FROM ai_usage_entries WHERE project_id = ?`).get(projectId) as RawTotalsRow;
-  const dailyRows = db.prepare(`SELECT substr(used_at,1,10) as date, count(*) as entries, coalesce(sum(input_tokens),0) as inputTokens, coalesce(sum(output_tokens),0) as outputTokens, coalesce(sum(cache_tokens),0) as cacheTokens, coalesce(sum(reasoning_tokens),0) as reasoningTokens, coalesce(sum(input_tokens + output_tokens),0) as totalTokens, coalesce(sum(cost_eur),0) as costEur FROM ai_usage_entries WHERE project_id = ? GROUP BY substr(used_at,1,10) ORDER BY date ASC`).all(projectId) as RawChartRow[];
-  const providerRows = db.prepare(`SELECT coalesce(pr.name,'IA') as name, count(*) as entries, coalesce(sum(e.input_tokens),0) as inputTokens, coalesce(sum(e.output_tokens),0) as outputTokens, coalesce(sum(e.cache_tokens),0) as cacheTokens, coalesce(sum(e.reasoning_tokens),0) as reasoningTokens, coalesce(sum(e.input_tokens + e.output_tokens),0) as totalTokens, coalesce(sum(e.cost_eur),0) as costEur FROM ai_usage_entries e LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE e.project_id = ? GROUP BY coalesce(pr.name,'IA') ORDER BY totalTokens DESC, name ASC LIMIT 5`).all(projectId) as RawBreakdownRow[];
-  const modelRows = db.prepare(`SELECT coalesce(m.name,'Modèle') as name, count(*) as entries, coalesce(sum(e.input_tokens),0) as inputTokens, coalesce(sum(e.output_tokens),0) as outputTokens, coalesce(sum(e.cache_tokens),0) as cacheTokens, coalesce(sum(e.reasoning_tokens),0) as reasoningTokens, coalesce(sum(e.input_tokens + e.output_tokens),0) as totalTokens, coalesce(sum(e.cost_eur),0) as costEur FROM ai_usage_entries e LEFT JOIN ai_models m ON m.id = e.model_id WHERE e.project_id = ? GROUP BY coalesce(m.name,'Modèle') ORDER BY totalTokens DESC, name ASC LIMIT 5`).all(projectId) as RawBreakdownRow[];
+  const dateFilter = usageTimeFilter("used_at", timeRange);
+  const aliasedDateFilter = usageTimeFilter("e.used_at", timeRange);
+  const totalsRow = db.prepare(`SELECT count(*) as entries, coalesce(sum(input_tokens),0) as inputTokens, coalesce(sum(output_tokens),0) as outputTokens, coalesce(sum(cache_tokens),0) as cacheTokens, coalesce(sum(reasoning_tokens),0) as reasoningTokens, coalesce(sum(input_tokens + output_tokens),0) as totalTokens, coalesce(sum(cost_eur),0) as costEur FROM ai_usage_entries WHERE project_id = ?${dateFilter.clause}`).get(projectId) as RawTotalsRow;
+  const dailyRows = db.prepare(`SELECT substr(used_at,1,10) as date, count(*) as entries, coalesce(sum(input_tokens),0) as inputTokens, coalesce(sum(output_tokens),0) as outputTokens, coalesce(sum(cache_tokens),0) as cacheTokens, coalesce(sum(reasoning_tokens),0) as reasoningTokens, coalesce(sum(input_tokens + output_tokens),0) as totalTokens, coalesce(sum(cost_eur),0) as costEur FROM ai_usage_entries WHERE project_id = ?${dateFilter.clause} GROUP BY substr(used_at,1,10) ORDER BY date ASC`).all(projectId) as RawChartRow[];
+  const providerRows = db.prepare(`SELECT coalesce(pr.name,'IA') as name, count(*) as entries, coalesce(sum(e.input_tokens),0) as inputTokens, coalesce(sum(e.output_tokens),0) as outputTokens, coalesce(sum(e.cache_tokens),0) as cacheTokens, coalesce(sum(e.reasoning_tokens),0) as reasoningTokens, coalesce(sum(e.input_tokens + e.output_tokens),0) as totalTokens, coalesce(sum(e.cost_eur),0) as costEur FROM ai_usage_entries e LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE e.project_id = ?${aliasedDateFilter.clause} GROUP BY coalesce(pr.name,'IA') ORDER BY totalTokens DESC, name ASC LIMIT 5`).all(projectId) as RawBreakdownRow[];
+  const modelRows = db.prepare(`SELECT coalesce(m.name,'Modèle') as name, count(*) as entries, coalesce(sum(e.input_tokens),0) as inputTokens, coalesce(sum(e.output_tokens),0) as outputTokens, coalesce(sum(e.cache_tokens),0) as cacheTokens, coalesce(sum(e.reasoning_tokens),0) as reasoningTokens, coalesce(sum(e.input_tokens + e.output_tokens),0) as totalTokens, coalesce(sum(e.cost_eur),0) as costEur FROM ai_usage_entries e LEFT JOIN ai_models m ON m.id = e.model_id WHERE e.project_id = ?${aliasedDateFilter.clause} GROUP BY coalesce(m.name,'Modèle') ORDER BY totalTokens DESC, name ASC LIMIT 5`).all(projectId) as RawBreakdownRow[];
   const normalize = (row: RawBreakdownRow) => ({ name: String(row.name), inputTokens: Number(row.inputTokens ?? 0), outputTokens: Number(row.outputTokens ?? 0), cacheTokens: Number(row.cacheTokens ?? 0), reasoningTokens: Number(row.reasoningTokens ?? 0), totalTokens: Number(row.totalTokens ?? 0), costEur: toNonNegativeMoney(Number(row.costEur ?? 0)), entries: Number(row.entries ?? 0) });
   const normalizeDaily = (row: RawChartRow) => ({ date: String(row.date), inputTokens: Number(row.inputTokens ?? 0), outputTokens: Number(row.outputTokens ?? 0), cacheTokens: Number(row.cacheTokens ?? 0), reasoningTokens: Number(row.reasoningTokens ?? 0), totalTokens: Number(row.totalTokens ?? 0), costEur: toNonNegativeMoney(Number(row.costEur ?? 0)), entries: Number(row.entries ?? 0) });
   return {
     projectId: Number(project.id),
     projectName: String(project.name),
-     totals: { entries: Number(totalsRow.entries ?? 0), inputTokens: Number(totalsRow.inputTokens ?? 0), outputTokens: Number(totalsRow.outputTokens ?? 0), cacheTokens: Number(totalsRow.cacheTokens ?? 0), reasoningTokens: Number(totalsRow.reasoningTokens ?? 0), totalTokens: Number(totalsRow.totalTokens ?? 0), costEur: toNonNegativeMoney(Number(totalsRow.costEur ?? 0)) },
+    timeRange: dateFilter.range,
+    totals: { entries: Number(totalsRow.entries ?? 0), inputTokens: Number(totalsRow.inputTokens ?? 0), outputTokens: Number(totalsRow.outputTokens ?? 0), cacheTokens: Number(totalsRow.cacheTokens ?? 0), reasoningTokens: Number(totalsRow.reasoningTokens ?? 0), totalTokens: Number(totalsRow.totalTokens ?? 0), costEur: toNonNegativeMoney(Number(totalsRow.costEur ?? 0)) },
     daily: withMaxRatio(dailyRows.map(normalizeDaily)),
     topProviders: withMaxRatio(providerRows.map(normalize)),
     topModels: withMaxRatio(modelRows.map(normalize)),
   };
 }
 
-export function buildUsageChartData(dbPath: string, userId: number, projectId: number): UsageChartData {
+export function buildUsageChartData(dbPath: string, userId: number, projectId: number, timeRange: UsageTimeRange = "all"): UsageChartData {
   initDb(dbPath); const db = open(dbPath);
-  try { return _buildUsageChartData(db, userId, projectId); } finally { db.close(); }
+  try { return _buildUsageChartData(db, userId, projectId, timeRange); } finally { db.close(); }
 }
 
 const VISUAL_AGENT_COLORS = [
@@ -877,13 +897,14 @@ function normalizedScore(value: number, max: number) {
   if (max <= 0 || value <= 0) return 0;
   return Math.max(1, Math.min(100, Math.round((value / max) * 100)));
 }
-function _buildVisualDashboardData(db: DatabaseSync, userId: number, projectId?: number | null): VisualDashboardData {
+function _buildVisualDashboardData(db: DatabaseSync, userId: number, projectId?: number | null, timeRange: UsageTimeRange = "all"): VisualDashboardData {
   const scope = db.prepare(`SELECT p.id FROM projects p JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ? WHERE (? IS NULL OR p.id = ?)`)
     .all(userId, projectId ?? null, projectId ?? null) as { id: number }[];
   if (projectId != null && scope.length === 0) throw new Error("Accès projet refusé");
   const agentMap = new Map<string, RawVisualAgentRow>();
+  const dateFilter = usageTimeFilter("e.used_at", timeRange);
   const entries = db.prepare(`SELECT e.label, p.name as projectName, m.name as modelName, pr.name as providerName, e.input_tokens as inputTokens, e.output_tokens as outputTokens, e.cache_tokens as cacheTokens, e.reasoning_tokens as reasoningTokens, e.cost_eur as costEur, e.used_at as usedAt
-    FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id JOIN project_members pm ON pm.project_id = e.project_id AND pm.user_id = ? LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE (? IS NULL OR e.project_id = ?)`)
+    FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id JOIN project_members pm ON pm.project_id = e.project_id AND pm.user_id = ? LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE (? IS NULL OR e.project_id = ?)${dateFilter.clause}`)
     .all(userId, projectId ?? null, projectId ?? null) as { label: string; projectName: string; modelName: string | null; providerName: string | null; inputTokens: number; outputTokens: number; cacheTokens: number; reasoningTokens: number; costEur: number; usedAt: string }[];
   const modelsByAgent = new Map<string, Map<string, RawVisualModelRow>>();
   for (const entry of entries) {
@@ -947,16 +968,16 @@ function _buildVisualDashboardData(db: DatabaseSync, userId: number, projectId?:
         .map((model) => ({ name: model.modelName, tokens: Number(model.tokens), cost: toNonNegativeMoney(model.costEur), sessions: Number(model.entries), lastUsed: String(model.lastUsed || "").slice(0, 10) })),
     };
   });
-  return { agents };
+  return { timeRange: dateFilter.range, agents };
 }
-export function buildVisualDashboardData(dbPath: string, userId: number, projectId?: number | null): VisualDashboardData {
+export function buildVisualDashboardData(dbPath: string, userId: number, projectId?: number | null, timeRange: UsageTimeRange = "all"): VisualDashboardData {
   initDb(dbPath); const db = open(dbPath);
-  try { return _buildVisualDashboardData(db, userId, projectId); } finally { db.close(); }
+  try { return _buildVisualDashboardData(db, userId, projectId, timeRange); } finally { db.close(); }
 }
 
 const USAGE_PAGE_SIZE = 30;
 
-export function listDashboardData(dbPath: string, userId: number, selectedProjectId?: number, page = 1) {
+export function listDashboardData(dbPath: string, userId: number, selectedProjectId?: number, page = 1, timeRange: UsageTimeRange = "all") {
   initDb(dbPath); seedDefaultProviders(dbPath); const db = open(dbPath);
   const projects = db.prepare(`SELECT p.id, p.name, p.description, p.owner_user_id as ownerUserId FROM projects p JOIN project_members pm ON pm.project_id = p.id WHERE pm.user_id = ? ORDER BY p.id DESC`).all(userId) as Project[];
   const providers = db.prepare("SELECT id, name, kind FROM ai_providers ORDER BY id").all() as Provider[];
@@ -965,18 +986,21 @@ export function listDashboardData(dbPath: string, userId: number, selectedProjec
   const aiAccounts = (db.prepare(`SELECT a.id, a.user_id as userId, a.provider_id as providerId, p.name as providerName, a.name, a.connection_type as connectionType, a.subscription_name as subscriptionName, a.monthly_cost_eur as monthlyCostEur, a.notes FROM ai_accounts a LEFT JOIN ai_providers p ON p.id = a.provider_id WHERE a.user_id = ? ORDER BY a.id DESC`).all(userId) as RawAccountRow[]).map(rowToAccount);
   const projectAiSetups = selectedProject ? (db.prepare(`SELECT s.id, s.project_id as projectId, p.name as projectName, s.account_id as accountId, a.name as accountName, pr.name as providerName, s.model_id as modelId, m.name as modelName, s.connection_type as connectionType, a.subscription_name as subscriptionName, a.monthly_cost_eur as monthlyCostEur, s.input_price_per_million as inputPricePerMillion, s.output_price_per_million as outputPricePerMillion, s.label
     FROM project_ai_setups s JOIN projects p ON p.id = s.project_id JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ? JOIN ai_accounts a ON a.id = s.account_id LEFT JOIN ai_providers pr ON pr.id = a.provider_id LEFT JOIN ai_models m ON m.id = s.model_id WHERE s.project_id = ? ORDER BY s.id DESC`).all(userId, selectedProject.id) as RawSetupRow[]).map(rowToSetup) : [];
-  const usage = db.prepare(`SELECT coalesce(sum(input_tokens + output_tokens),0) as tokens, coalesce(sum(cost_eur),0) as cost FROM ai_usage_entries e JOIN project_members pm ON pm.project_id = e.project_id WHERE pm.user_id = ?`).get(userId) as RawUsageSumRow;
-  const projectUsage = selectedProject ? db.prepare(`SELECT coalesce(sum(input_tokens + output_tokens),0) as tokens, coalesce(sum(cost_eur),0) as cost FROM ai_usage_entries WHERE project_id = ?`).get(selectedProject.id) as RawUsageSumRow : { tokens: 0, cost: 0 };
+  const range = normalizeUsageTimeRange(timeRange);
+  const usageDateFilter = usageTimeFilter("e.used_at", range);
+  const projectDateFilter = usageTimeFilter("used_at", range);
+  const usage = db.prepare(`SELECT coalesce(sum(input_tokens + output_tokens),0) as tokens, coalesce(sum(cost_eur),0) as cost FROM ai_usage_entries e JOIN project_members pm ON pm.project_id = e.project_id WHERE pm.user_id = ?${usageDateFilter.clause}`).get(userId) as RawUsageSumRow;
+  const projectUsage = selectedProject ? db.prepare(`SELECT coalesce(sum(input_tokens + output_tokens),0) as tokens, coalesce(sum(cost_eur),0) as cost FROM ai_usage_entries WHERE project_id = ?${projectDateFilter.clause}`).get(selectedProject.id) as RawUsageSumRow : { tokens: 0, cost: 0 };
   const subscriptionMonthly = projectAiSetups.reduce((sum, setup) => sum + (setup.connectionType === "subscription" ? setup.monthlyCostEur : 0), 0);
   const safePage = Math.max(1, Math.round(page));
   const offset = (safePage - 1) * USAGE_PAGE_SIZE;
-  const totalUsageRow = db.prepare(`SELECT count(*) as total FROM ai_usage_entries e JOIN project_members pm ON pm.project_id = e.project_id AND pm.user_id = ? WHERE (? IS NULL OR e.project_id = ?)`).get(userId, selectedProject?.id ?? null, selectedProject?.id ?? null) as { total: number };
+  const totalUsageRow = db.prepare(`SELECT count(*) as total FROM ai_usage_entries e JOIN project_members pm ON pm.project_id = e.project_id AND pm.user_id = ? WHERE (? IS NULL OR e.project_id = ?)${usageDateFilter.clause}`).get(userId, selectedProject?.id ?? null, selectedProject?.id ?? null) as { total: number };
   const totalUsageEntries = Number(totalUsageRow.total ?? 0);
-  const usageEntries = (db.prepare(`SELECT e.id, e.project_id as projectId, p.name as projectName, e.model_id as modelId, m.name as modelName, pr.name as providerName, e.label, e.input_tokens as inputTokens, e.output_tokens as outputTokens, e.cache_tokens as cacheTokens, e.reasoning_tokens as reasoningTokens, e.cost_eur as costEur, e.used_at as usedAt FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id JOIN project_members pm ON pm.project_id = e.project_id AND pm.user_id = ? LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE (? IS NULL OR e.project_id = ?) ORDER BY e.used_at DESC, e.id DESC LIMIT ? OFFSET ?`).all(userId, selectedProject?.id ?? null, selectedProject?.id ?? null, USAGE_PAGE_SIZE, offset) as RawEntryRow[]).map(rowToEntry);
-  const usageCharts = selectedProject ? _buildUsageChartData(db, userId, selectedProject.id) : null;
-  const visualDashboard = _buildVisualDashboardData(db, userId, selectedProject?.id ?? null);
+  const usageEntries = (db.prepare(`SELECT e.id, e.project_id as projectId, p.name as projectName, e.model_id as modelId, m.name as modelName, pr.name as providerName, e.label, e.input_tokens as inputTokens, e.output_tokens as outputTokens, e.cache_tokens as cacheTokens, e.reasoning_tokens as reasoningTokens, e.cost_eur as costEur, e.used_at as usedAt FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id JOIN project_members pm ON pm.project_id = e.project_id AND pm.user_id = ? LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE (? IS NULL OR e.project_id = ?)${usageDateFilter.clause} ORDER BY e.used_at DESC, e.id DESC LIMIT ? OFFSET ?`).all(userId, selectedProject?.id ?? null, selectedProject?.id ?? null, USAGE_PAGE_SIZE, offset) as RawEntryRow[]).map(rowToEntry);
+  const usageCharts = selectedProject ? _buildUsageChartData(db, userId, selectedProject.id, range) : null;
+  const visualDashboard = _buildVisualDashboardData(db, userId, selectedProject?.id ?? null, range);
   db.close();
-  return { projects, providers, models, aiAccounts, projectAiSetups, selectedProject, usageEntries, totalUsageEntries, usagePage: safePage, usagePageSize: USAGE_PAGE_SIZE, usageCharts, visualDashboard, usage: { tokens: Number(usage.tokens), cost: toNonNegativeMoney(Number(usage.cost)) }, projectUsage: { tokens: Number(projectUsage.tokens), cost: toNonNegativeMoney(Number(projectUsage.cost)), subscriptionMonthly } };
+  return { projects, providers, models, aiAccounts, projectAiSetups, selectedProject, timeRange: range, usageEntries, totalUsageEntries, usagePage: safePage, usagePageSize: USAGE_PAGE_SIZE, usageCharts, visualDashboard, usage: { tokens: Number(usage.tokens), cost: toNonNegativeMoney(Number(usage.cost)) }, projectUsage: { tokens: Number(projectUsage.tokens), cost: toNonNegativeMoney(Number(projectUsage.cost)), subscriptionMonthly } };
 }
 
 export const DB_PATH = defaultDbPath;

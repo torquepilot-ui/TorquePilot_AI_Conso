@@ -28,6 +28,7 @@ import {
   getUsageCollectorHealth,
   buildUsageReport,
   saveUsageReportFile,
+  normalizeUsageTimeRange,
   buildUsageChartData,
   buildVisualDashboardData,
   listSavedUsageReports,
@@ -692,9 +693,9 @@ test("Phase 4H : agrégats graphiques isolés par projet et utilisateur", () => 
     const setup = assignAiAccountToProject(dbPath, user.id, { projectId: project.id, accountId: account.id, modelId: gpt.id, connectionType: "api" });
     const otherSetup = assignAiAccountToProject(dbPath, user.id, { projectId: otherProject.id, accountId: account.id, modelId: gpt.id, connectionType: "api" });
 
-    importConnectorUsage(dbPath, user.id, { connector: "openai", projectId: project.id, setupId: setup.id, sourceName: "jour 1", usedAt: "2026-05-08", rawExport: JSON.stringify({ id: "a", usage: { input_tokens: 1000, output_tokens: 500, input_tokens_details: { cached_tokens: 300 }, output_tokens_details: { reasoning_tokens: 80 } } }) });
-    importConnectorUsage(dbPath, user.id, { connector: "openai", projectId: project.id, setupId: setup.id, sourceName: "jour 2", usedAt: "2026-05-09", rawExport: JSON.stringify({ id: "b", usage: { input_tokens: 2000, output_tokens: 1000, input_tokens_details: { cached_tokens: 500 }, output_tokens_details: { reasoning_tokens: 120 } } }) });
-    importConnectorUsage(dbPath, user.id, { connector: "openai", projectId: otherProject.id, setupId: otherSetup.id, sourceName: "hors scope", usedAt: "2026-05-09", rawExport: JSON.stringify({ id: "c", usage: { input_tokens: 9000, output_tokens: 9000, input_tokens_details: { cached_tokens: 9000 }, output_tokens_details: { reasoning_tokens: 9000 } } }) });
+    importConnectorUsage(dbPath, user.id, { connector: "openai", projectId: project.id, setupId: setup.id, sourceName: "jour 1", usedAt: "2000-05-08", rawExport: JSON.stringify({ id: "a", usage: { input_tokens: 1000, output_tokens: 500, input_tokens_details: { cached_tokens: 300 }, output_tokens_details: { reasoning_tokens: 80 } } }) });
+    importConnectorUsage(dbPath, user.id, { connector: "openai", projectId: project.id, setupId: setup.id, sourceName: "jour 2", usedAt: "2000-05-09", rawExport: JSON.stringify({ id: "b", usage: { input_tokens: 2000, output_tokens: 1000, input_tokens_details: { cached_tokens: 500 }, output_tokens_details: { reasoning_tokens: 120 } } }) });
+    importConnectorUsage(dbPath, user.id, { connector: "openai", projectId: otherProject.id, setupId: otherSetup.id, sourceName: "hors scope", usedAt: "2000-05-09", rawExport: JSON.stringify({ id: "c", usage: { input_tokens: 9000, output_tokens: 9000, input_tokens_details: { cached_tokens: 9000 }, output_tokens_details: { reasoning_tokens: 9000 } } }) });
 
     const charts = buildUsageChartData(dbPath, user.id, project.id);
 
@@ -706,12 +707,37 @@ test("Phase 4H : agrégats graphiques isolés par projet et utilisateur", () => 
     assert.equal(charts.totals.reasoningTokens, 200);
     assert.equal(charts.totals.totalTokens, 4500);
     assert.equal(charts.daily.length, 2);
-    assert.deepEqual(charts.daily.map((d) => [d.date, d.totalTokens, d.cacheTokens, d.reasoningTokens]), [["2026-05-08", 1500, 300, 80], ["2026-05-09", 3000, 500, 120]]);
+    assert.deepEqual(charts.daily.map((d) => [d.date, d.totalTokens, d.cacheTokens, d.reasoningTokens]), [["2000-05-08", 1500, 300, 80], ["2000-05-09", 3000, 500, 120]]);
     assert.equal(charts.daily[1].maxRatio, 1);
     assert.equal(charts.topProviders[0].name, "OpenAI");
     assert.equal(charts.topProviders[0].totalTokens, 4500);
     assert.equal(charts.topProviders[0].cacheTokens, 800);
     assert.equal(charts.topModels[0].name, "GPT-4.1");
+    assert.equal(normalizeUsageTimeRange("bogus"), "all");
+
+    const rangeAll = listDashboardData(dbPath, user.id, project.id, 1, "all");
+    const range30d = listDashboardData(dbPath, user.id, project.id, 1, "30d");
+    const range7d = listDashboardData(dbPath, user.id, project.id, 1, "7d");
+    const range24h = listDashboardData(dbPath, user.id, project.id, 1, "24h");
+    assert.equal(rangeAll.timeRange, "all");
+    assert.equal(rangeAll.usageCharts?.timeRange, "all");
+    assert.equal(rangeAll.visualDashboard.timeRange, "all");
+    assert.equal(rangeAll.projectUsage.tokens, 4500);
+    assert.equal(range30d.timeRange, "30d");
+    assert.equal(range30d.projectUsage.tokens, 0);
+    assert.equal(range7d.timeRange, "7d");
+    assert.equal(range7d.projectUsage.tokens, 0);
+    assert.equal(range24h.timeRange, "24h");
+    assert.equal(range24h.projectUsage.tokens, 0);
+
+    const charts30d = buildUsageChartData(dbPath, user.id, project.id, "30d");
+    assert.equal(charts30d.timeRange, "30d");
+    assert.equal(charts30d.totals.entries, 0);
+    assert.equal(charts30d.daily.length, 0);
+
+    const visual30d = buildVisualDashboardData(dbPath, user.id, project.id, "30d");
+    assert.equal(visual30d.timeRange, "30d");
+    assert.equal(visual30d.agents.length, 0);
     assert.throws(() => buildUsageChartData(dbPath, other.id, project.id), /Accès projet refusé/);
   } finally {
     cleanup();
