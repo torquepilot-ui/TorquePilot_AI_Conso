@@ -5,6 +5,7 @@ import { DASHBOARD_NAV_ITEMS, getDashboardNavItem } from "./dashboard-navigation
 test("navigation dashboard : menu professionnel complet et ordonné", () => {
   assert.deepEqual(DASHBOARD_NAV_ITEMS.map((item) => item.label), [
     "HOME",
+    "EXECUTIVE",
     "PROJETS",
     "AGENTS",
     "LOGS",
@@ -20,6 +21,8 @@ test("navigation dashboard : menu professionnel complet et ordonné", () => {
 
 test("navigation dashboard : résolution page active par route", () => {
   assert.equal(getDashboardNavItem("/")?.label, "HOME");
+  assert.equal(getDashboardNavItem("/executive")?.label, "EXECUTIVE");
+  assert.equal(getDashboardNavItem("/executive?project=1")?.label, "EXECUTIVE");
   assert.equal(getDashboardNavItem("/consommation")?.label, "CONSOMMATION");
   assert.equal(getDashboardNavItem("/consommation?range=7d")?.label, "CONSOMMATION");
   assert.equal(getDashboardNavItem("/collecte")?.label, "COLLECTE");

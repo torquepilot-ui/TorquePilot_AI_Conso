@@ -7,6 +7,7 @@ export type DashboardNavItem = {
 
 export const DASHBOARD_NAV_ITEMS: DashboardNavItem[] = [
   { label: "HOME", href: "/", icon: "⌂", description: "Vue générale : santé, fallback live, KPIs et raccourcis." },
+  { label: "EXECUTIVE", href: "/executive", icon: "◇", description: "Synthèse décideur : valeur, ROI, risques et recommandations." },
   { label: "PROJETS", href: "/projets", icon: "▦", description: "Création, sélection et pilotage des projets suivis." },
   { label: "AGENTS", href: "/agents", icon: "◈", description: "Agents IA, comptes, modèles et affectations projet." },
   { label: "LOGS", href: "/logs", icon: "≋", description: "Journal redacted : événements fallback, imports et diagnostics." },

@@ -613,6 +613,106 @@ button {
 .consumptionHistoryRow > div { min-width: 0; }
 .consumptionHistoryRow h3, .consumptionHistoryRow p, .consumptionHistoryRow small { overflow-wrap: anywhere; }
 
+/* ── Executive decision dashboard ──────────────────────────────────────────── */
+.executiveHeroGrid, .executiveNarrativeGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(330px, .85fr);
+  gap: 18px;
+  margin-top: 18px;
+}
+.executiveValueCard, .executiveRiskCard, .executiveStoryCard, .executiveProofCard, .executiveRecommendations, .executiveCtaPanel {
+  background:
+    radial-gradient(circle at 18% 0%, rgba(167,139,250,.14), transparent 34%),
+    rgba(16,27,46,.88);
+}
+.executiveBigMetric strong {
+  display: block;
+  font-size: clamp(44px, 7vw, 92px);
+  line-height: .9;
+  letter-spacing: -.08em;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.executiveBigMetric span { color: var(--muted); font-weight: 900; }
+.executiveFilters { margin-top: 18px; }
+.executiveRiskWarn { border-color: rgba(255,196,87,.42); box-shadow: 0 20px 80px rgba(255,196,87,.08); }
+.executiveGauge {
+  height: 14px;
+  margin: 14px 0 18px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.08);
+  overflow: hidden;
+}
+.executiveGauge i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--warning), var(--danger)); box-shadow: 0 0 24px rgba(255,196,87,.28); }
+.executiveRiskList { display: grid; gap: 10px; }
+.executiveRiskList span {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(255,255,255,.035);
+  color: var(--muted);
+  min-width: 0;
+}
+.executiveRiskList strong { color: var(--text); text-align: right; overflow-wrap: anywhere; }
+.executiveValueGrid, .executiveProofGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+.executiveKpiCard, .executiveProofGrid article {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: rgba(255,255,255,.035);
+}
+.executiveKpiCard span, .executiveProofGrid span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+.executiveKpiCard strong, .executiveProofGrid strong {
+  display: block;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.executiveKpiCard small { display: block; margin-top: 6px; color: var(--muted); overflow-wrap: anywhere; }
+.executiveNarrativeGrid, .executiveRecommendations, .executiveCtaPanel { margin-top: 18px; }
+.executiveBullets { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.executiveBullets li {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 12px;
+  padding: 13px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(255,255,255,.035);
+}
+.executiveBullets strong { color: var(--accent); }
+.executiveBullets span { color: var(--muted); overflow-wrap: anywhere; }
+.executiveProofGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.executiveActionList { gap: 10px; }
+.executiveActionRow { border: 1px solid var(--border); background: rgba(255,255,255,.03); }
+.executiveActionRow > div { min-width: 0; }
+.executiveActionRow h3, .executiveActionRow p { overflow-wrap: anywhere; }
+.executiveActionRow p { color: var(--muted); }
+.executiveCtaPanel {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: center;
+}
+.executiveCtaPanel > div { min-width: 0; }
+.executiveCtaLinks { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+
 /* ── Premium agents dashboard ──────────────────────────────────────────────── */
 .agentsHeroGrid, .agentsOpsGrid {
   display: grid;
@@ -768,8 +868,8 @@ button {
 .alertOpsGrid { margin-top: 18px; }
 
 @media (max-width: 1100px) {
-  .consumptionHeroGrid, .consumptionAnalyticsGrid, .alertHeroGrid, .agentsHeroGrid, .agentsOpsGrid { grid-template-columns: 1fr; }
-  .tokenSplitGrid, .providerMetaGrid, .historyTotals, .agentsHeroStats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .consumptionHeroGrid, .consumptionAnalyticsGrid, .alertHeroGrid, .agentsHeroGrid, .agentsOpsGrid, .executiveHeroGrid, .executiveNarrativeGrid { grid-template-columns: 1fr; }
+  .tokenSplitGrid, .providerMetaGrid, .historyTotals, .agentsHeroStats, .executiveValueGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .alertHealthGrid, .agentsPerformanceGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
 
@@ -784,8 +884,11 @@ button {
   .dashboardTopbar { padding: 0 14px; }
   .topbarStatus { display: none; }
   .dashboardContent { width: min(100% - 22px, 1180px); }
-  .consumptionForm, .tokenSplitGrid, .providerMetaGrid, .historyTotals, .consumptionBreakdowns, .alertCostGrid, .alertHealthGrid, .agentsHeroStats, .agentsPerformanceGrid { grid-template-columns: 1fr !important; }
-  .consumptionBigMetric strong, .agentsBigMetric strong { font-size: clamp(36px, 17vw, 58px); }
+  .consumptionForm, .tokenSplitGrid, .providerMetaGrid, .historyTotals, .consumptionBreakdowns, .alertCostGrid, .alertHealthGrid, .agentsHeroStats, .agentsPerformanceGrid, .executiveValueGrid, .executiveProofGrid, .executiveBullets { grid-template-columns: 1fr !important; }
+  .consumptionBigMetric strong, .agentsBigMetric strong, .executiveBigMetric strong { font-size: clamp(36px, 17vw, 58px); }
   .alertScore strong { font-size: clamp(52px, 22vw, 86px); }
-  .consumptionHeroGrid, .consumptionAnalyticsGrid, .alertHeroGrid, .agentsHeroGrid, .agentsOpsGrid { gap: 12px; }
+  .consumptionHeroGrid, .consumptionAnalyticsGrid, .alertHeroGrid, .agentsHeroGrid, .agentsOpsGrid, .executiveHeroGrid, .executiveNarrativeGrid { gap: 12px; }
+  .executiveCtaPanel { align-items: stretch; flex-direction: column; }
+  .executiveCtaLinks { justify-content: stretch; }
+  .executiveCtaLinks .buttonLink { flex: 1 1 100%; text-align: center; }
 }
