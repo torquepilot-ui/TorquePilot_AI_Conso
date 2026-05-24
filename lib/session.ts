@@ -20,6 +20,7 @@ export function readSession(token?: string | null) {
   const [value, sig] = token.split(".");
   if (!value || !sig) return null;
   const expected = sign(value);
+  if (sig.length !== expected.length) return null;
   const ok = timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
   return ok ? Number(value) : null;
 }

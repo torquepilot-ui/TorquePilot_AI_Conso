@@ -23,6 +23,11 @@ export async function currentUserId() {
   return readSession(jar.get("tp_session")?.value);
 }
 
+function safeReturnTo(formData: FormData, fallback: string) {
+  const value = String(formData.get("returnTo") || "");
+  return value.startsWith("/") && !value.startsWith("//") ? value : fallback;
+}
+
 export async function registerAction(formData: FormData) {
   const email = String(formData.get("email") || "");
   const password = String(formData.get("password") || "");
@@ -186,6 +191,7 @@ export async function importUsageAction(formData: FormData) {
   const userId = await currentUserId();
   if (!userId) redirect("/");
   const projectId = Number(formData.get("projectId") || 0);
+  const returnTo = safeReturnTo(formData, `/?project=${projectId || ""}`);
   try {
     importConnectorUsage(DB_PATH, userId, {
       connector: String(formData.get("connector") || "generic") as any,
@@ -196,8 +202,9 @@ export async function importUsageAction(formData: FormData) {
       usedAt: String(formData.get("usedAt") || ""),
     });
     revalidatePath("/");
-  } catch (err) { console.error("[importUsageAction]", err); redirect(`/?project=${projectId || ""}&error=Import automatique refusé`); }
-  redirect(`/?project=${projectId}`);
+    revalidatePath("/collecte");
+  } catch (err) { console.error("[importUsageAction]", err); redirect(`${returnTo}${returnTo.includes("?") ? "&" : "?"}error=Import automatique refusé`); }
+  redirect(returnTo);
 }
 
 export async function importFallbackUsageAction(formData: FormData) {
@@ -223,22 +230,26 @@ export async function importInboxAction(formData: FormData) {
   const userId = await currentUserId();
   if (!userId) redirect("/");
   const projectId = Number(formData.get("projectId") || 0);
+  const returnTo = safeReturnTo(formData, `/?project=${projectId || ""}`);
   try {
     importUsageInbox(DB_PATH, userId, { rootDir: USAGE_INBOX_DIR, projectId, setupId: Number(formData.get("setupId") || 0), usedAt: String(formData.get("usedAt") || "") });
     revalidatePath("/");
-  } catch (err) { console.error("[importInboxAction]", err); redirect(`/?project=${projectId || ""}&error=Import dossier refusé`); }
-  redirect(`/?project=${projectId}`);
+    revalidatePath("/collecte");
+  } catch (err) { console.error("[importInboxAction]", err); redirect(`${returnTo}${returnTo.includes("?") ? "&" : "?"}error=Import dossier refusé`); }
+  redirect(returnTo);
 }
 
 export async function deleteSavedReportAction(formData: FormData) {
   const userId = await currentUserId();
   if (!userId) redirect("/");
   const projectId = Number(formData.get("projectId") || 0);
+  const returnTo = safeReturnTo(formData, `/?project=${projectId || ""}`);
   try {
     deleteSavedUsageReport(USAGE_REPORTS_DIR, String(formData.get("fileName") || ""));
     revalidatePath("/");
-  } catch (err) { console.error("[deleteSavedReportAction]", err); redirect(`/?project=${projectId || ""}&error=Suppression rapport refusée`); }
-  redirect(`/?project=${projectId || ""}`);
+    revalidatePath("/collecte");
+  } catch (err) { console.error("[deleteSavedReportAction]", err); redirect(`${returnTo}${returnTo.includes("?") ? "&" : "?"}error=Suppression rapport refusée`); }
+  redirect(returnTo);
 }
 
 export async function getOpenAiStatusAction(): Promise<ProviderConnectionStatus> {

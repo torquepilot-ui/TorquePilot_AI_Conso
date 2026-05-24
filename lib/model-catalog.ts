@@ -237,6 +237,32 @@ export const MODEL_CATALOG = [
     "source": "kiro_v3_usb_2026-05-09"
   },
   {
+    "providerSlug": "openrouter",
+    "providerName": "OpenRouter",
+    "apiModelId": "deepseek/deepseek-v4-pro",
+    "name": "DeepSeek V4 Pro via OpenRouter",
+    "category": "text",
+    "inputPricePerMillion": 1.498485,
+    "outputPricePerMillion": 2.997689,
+    "imagePrice": null,
+    "pricingUnit": "token",
+    "description": "Fallback HERMES via OpenRouter. Prix EUR/MTok hors promo : input cache miss 1,74 USD, output 3,48 USD, conversion 0,861198 EUR/USD. Cache hit suivi séparément dans les compteurs cache.",
+    "source": "hermes_fallback_2026-05-23"
+  },
+  {
+    "providerSlug": "openrouter",
+    "providerName": "OpenRouter",
+    "apiModelId": "deepseek/deepseek-v4-pro-cache-hit",
+    "name": "DeepSeek V4 Pro via OpenRouter — cache hit",
+    "category": "text",
+    "inputPricePerMillion": 0.012487,
+    "outputPricePerMillion": 2.997689,
+    "imagePrice": null,
+    "pricingUnit": "token",
+    "description": "Variante d’estimation fallback HERMES avec prix input cache hit 0,0145 USD/MTok converti en EUR.",
+    "source": "hermes_fallback_2026-05-23"
+  },
+  {
     "providerSlug": "grok",
     "providerName": "Grok",
     "apiModelId": "grok-4.20-0309-reasoning",

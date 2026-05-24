@@ -63,6 +63,7 @@ export type UsageEntry = {
   reasoningTokens: number;
   totalTokens: number;
   costEur: number;
+  estimatedCostEur: number;
   usedAt: string;
 };
 export type UsageInput = { projectId: number; modelId?: number | null; label: string; inputTokens: number; outputTokens: number; cacheTokens?: number; reasoningTokens?: number; costEur: number; usedAt?: string };
@@ -80,7 +81,7 @@ export type UsageCollectorHealth = { rootDir: string; pendingFiles: number; proc
 export type UsageInboxPreviewFile = { connector: UsageConnector; fileName: string; sourcePath: string; sizeBytes: number; status: "ready" | "failed"; detectedCount: number; inputTokens: number; outputTokens: number; cacheTokens: number; reasoningTokens: number; totalTokens: number; sampleLabels: string[]; errorMessage: string | null };
 export type UsageInboxPreview = { rootDir: string; folders: string[]; files: UsageInboxPreviewFile[]; totals: { files: number; readyFiles: number; failedFiles: number; detectedCount: number; inputTokens: number; outputTokens: number; cacheTokens: number; reasoningTokens: number; totalTokens: number } };
 export type UsageReportFormat = "csv" | "json";
-export type UsageReport = { projectId: number; projectName: string; generatedAt: string; format: UsageReportFormat; mimeType: string; fileName: string; totals: { entries: number; inputTokens: number; outputTokens: number; cacheTokens: number; reasoningTokens: number; totalTokens: number; costEur: number }; entries: UsageEntry[]; content: string };
+export type UsageReport = { projectId: number; projectName: string; generatedAt: string; format: UsageReportFormat; mimeType: string; fileName: string; totals: { entries: number; inputTokens: number; outputTokens: number; cacheTokens: number; reasoningTokens: number; totalTokens: number; costEur: number; estimatedCostEur: number }; entries: UsageEntry[]; content: string };
 export type SavedUsageReport = UsageReport & { filePath: string };
 export type SavedUsageReportSummary = { fileName: string; format: UsageReportFormat; sizeBytes: number; createdAt: string; filePath: string };
 export type DownloadedUsageReport = { fileName: string; format: UsageReportFormat; mimeType: string; sizeBytes: number; content: string };
@@ -112,7 +113,7 @@ type RawProviderIdRow = { id: number };
 type RawModelPriceRow = { input_price_per_million: number | null; output_price_per_million: number | null };
 type RawAccountDbRow = { id: number; user_id: number; provider_id: number | null; name: string; connection_type: string; subscription_name: string | null; monthly_cost_eur: number; notes: string | null };
 type RawSetupProjectRow = { projectId: number };
-type RawEntryRow = { id: number; projectId: number; projectName: string; modelId: number | null; modelName: string | null; providerName: string | null; label: string; inputTokens: number; outputTokens: number; cacheTokens?: number | null; reasoningTokens?: number | null; costEur: number; usedAt: string };
+type RawEntryRow = { id: number; projectId: number; projectName: string; modelId: number | null; modelName: string | null; providerName: string | null; label: string; inputTokens: number; outputTokens: number; cacheTokens?: number | null; reasoningTokens?: number | null; costEur: number; estimatedCostEur?: number | null; usedAt: string };
 type RawAccountRow = { id: number; userId: number; providerId: number | null; providerName: string | null; name: string; connectionType: string; subscriptionName: string | null; monthlyCostEur: number; notes: string | null };
 type RawSetupRow = { id: number; projectId: number; projectName: string; accountId: number; accountName: string; providerName: string | null; modelId: number | null; modelName: string | null; connectionType: string; subscriptionName: string | null; monthlyCostEur: number; inputPricePerMillion: number | null; outputPricePerMillion: number | null; label: string };
 type RawRunRow = { id: number; userId: number; projectId: number; setupId: number; connector: string; sourcePath: string; status: string; importedCount: number; errorMessage: string | null; createdAt: string };
@@ -257,6 +258,16 @@ function toNonNegativeInteger(value: number) { const n = Number(value); return !
 function toNonNegativeMoney(value: number) { const n = Number(value); return !Number.isFinite(n) || n < 0 ? 0 : Math.round(n * 1000000) / 1000000; }
 function toNullableMoney(value: unknown) { const n = Number(value); return Number.isFinite(n) && n >= 0 ? Math.round(n * 1000000) / 1000000 : null; }
 function normalizeConnectionType(value: string | undefined): ConnectionType { return value === "api" || value === "local" ? value : "subscription"; }
+function usageEstimatedCostSql(alias = "e") {
+  return `CASE
+    WHEN ${alias}.cost_eur > 0 THEN ${alias}.cost_eur
+    WHEN coalesce(s.input_price_per_million, m.input_price_per_million) IS NOT NULL AND coalesce(s.output_price_per_million, m.output_price_per_million) IS NOT NULL
+      THEN ((CASE WHEN ${alias}.input_tokens > 0 THEN ${alias}.input_tokens ELSE ${alias}.cache_tokens END) / 1000000.0) * coalesce(s.input_price_per_million, m.input_price_per_million)
+        + ((CASE WHEN ${alias}.output_tokens > 0 THEN ${alias}.output_tokens ELSE ${alias}.reasoning_tokens END) / 1000000.0) * coalesce(s.output_price_per_million, m.output_price_per_million)
+    ELSE 0
+  END`;
+}
+
 export function estimateTokensFromText(text: string, providerName?: string | null) {
   const clean = text.trim();
   if (!clean) return 0;
@@ -267,7 +278,8 @@ export function estimateTokensFromText(text: string, providerName?: string | nul
 function rowToEntry(row: RawEntryRow): UsageEntry {
   const inputTokens = Number(row.inputTokens ?? 0); const outputTokens = Number(row.outputTokens ?? 0);
   const cacheTokens = Number(row.cacheTokens ?? 0); const reasoningTokens = Number(row.reasoningTokens ?? 0);
-  return { id: Number(row.id), projectId: Number(row.projectId), projectName: String(row.projectName), modelId: row.modelId == null ? null : Number(row.modelId), modelName: row.modelName == null ? null : String(row.modelName), providerName: row.providerName == null ? null : String(row.providerName), label: String(row.label), inputTokens, outputTokens, cacheTokens, reasoningTokens, totalTokens: inputTokens + outputTokens, costEur: Number(row.costEur ?? 0), usedAt: String(row.usedAt) };
+  const costEur = Number(row.costEur ?? 0);
+  return { id: Number(row.id), projectId: Number(row.projectId), projectName: String(row.projectName), modelId: row.modelId == null ? null : Number(row.modelId), modelName: row.modelName == null ? null : String(row.modelName), providerName: row.providerName == null ? null : String(row.providerName), label: String(row.label), inputTokens, outputTokens, cacheTokens, reasoningTokens, totalTokens: inputTokens + outputTokens, costEur, estimatedCostEur: toNonNegativeMoney(Number(row.estimatedCostEur ?? costEur)), usedAt: String(row.usedAt) };
 }
 function rowToAccount(row: RawAccountRow): AiAccount {
   return { id: Number(row.id), userId: Number(row.userId), providerId: row.providerId == null ? null : Number(row.providerId), providerName: row.providerName == null ? null : String(row.providerName), name: String(row.name), connectionType: normalizeConnectionType(row.connectionType), subscriptionName: row.subscriptionName == null ? null : String(row.subscriptionName), monthlyCostEur: Number(row.monthlyCostEur ?? 0), notes: row.notes == null ? null : String(row.notes) };
@@ -747,8 +759,8 @@ export function getUsageCollectorHealth(dbPath: string, userId: number, rootDir:
 }
 
 function usageById(db: DatabaseSync, entryId: number): UsageEntry {
-  return rowToEntry(db.prepare(`SELECT e.id, e.project_id as projectId, p.name as projectName, e.model_id as modelId, m.name as modelName, pr.name as providerName, e.label, e.input_tokens as inputTokens, e.output_tokens as outputTokens, e.cache_tokens as cacheTokens, e.reasoning_tokens as reasoningTokens, e.cost_eur as costEur, e.used_at as usedAt
-    FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE e.id = ?`).get(entryId) as RawEntryRow);
+  return rowToEntry(db.prepare(`SELECT e.id, e.project_id as projectId, p.name as projectName, e.model_id as modelId, m.name as modelName, pr.name as providerName, e.label, e.input_tokens as inputTokens, e.output_tokens as outputTokens, e.cache_tokens as cacheTokens, e.reasoning_tokens as reasoningTokens, e.cost_eur as costEur, ${usageEstimatedCostSql("e")} as estimatedCostEur, e.used_at as usedAt
+    FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id LEFT JOIN project_ai_setups s ON s.id = e.setup_id LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE e.id = ?`).get(entryId) as RawEntryRow);
 }
 
 function csvEscape(value: unknown) {
@@ -761,8 +773,8 @@ function safeReportSlug(value: string) {
 function usageReportEntries(db: DatabaseSync, userId: number, projectId: number) {
   const project = db.prepare(`SELECT p.id, p.name FROM projects p JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ? WHERE p.id = ?`).get(userId, projectId) as RawProjectRow | undefined;
   if (!project) throw new Error("Accès projet refusé");
-  const entries = (db.prepare(`SELECT e.id, e.project_id as projectId, p.name as projectName, e.model_id as modelId, m.name as modelName, pr.name as providerName, e.label, e.input_tokens as inputTokens, e.output_tokens as outputTokens, e.cache_tokens as cacheTokens, e.reasoning_tokens as reasoningTokens, e.cost_eur as costEur, e.used_at as usedAt
-    FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE e.project_id = ? ORDER BY e.used_at ASC, e.id ASC`).all(projectId) as RawEntryRow[]).map(rowToEntry);
+  const entries = (db.prepare(`SELECT e.id, e.project_id as projectId, p.name as projectName, e.model_id as modelId, m.name as modelName, pr.name as providerName, e.label, e.input_tokens as inputTokens, e.output_tokens as outputTokens, e.cache_tokens as cacheTokens, e.reasoning_tokens as reasoningTokens, e.cost_eur as costEur, ${usageEstimatedCostSql("e")} as estimatedCostEur, e.used_at as usedAt
+    FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id LEFT JOIN project_ai_setups s ON s.id = e.setup_id LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE e.project_id = ? ORDER BY e.used_at ASC, e.id ASC`).all(projectId) as RawEntryRow[]).map(rowToEntry);
   return { projectName: String(project.name), entries };
 }
 export function buildUsageReport(dbPath: string, userId: number, projectId: number, format: UsageReportFormat = "csv"): UsageReport {
@@ -778,14 +790,15 @@ export function buildUsageReport(dbPath: string, userId: number, projectId: numb
       reasoningTokens: entries.reduce((sum, entry) => sum + entry.reasoningTokens, 0),
       totalTokens: entries.reduce((sum, entry) => sum + entry.totalTokens, 0),
       costEur: toNonNegativeMoney(entries.reduce((sum, entry) => sum + entry.costEur, 0)),
+      estimatedCostEur: toNonNegativeMoney(entries.reduce((sum, entry) => sum + entry.estimatedCostEur, 0)),
     };
     const normalizedFormat: UsageReportFormat = format === "json" ? "json" : "csv";
     const fileName = `rapport-consommation-tokens-${safeReportSlug(projectName)}-${generatedAt.slice(0, 10)}.${normalizedFormat}`;
     const content = normalizedFormat === "json"
       ? JSON.stringify({ projectId, projectName, generatedAt, totals, entries }, null, 2)
       : [
-          "date,projet,fournisseur,modele,libelle,input_tokens,output_tokens,cache_tokens,reasoning_tokens,total_tokens,cost_eur",
-          ...entries.map((entry) => [entry.usedAt, entry.projectName, entry.providerName || "", entry.modelName || "", entry.label, entry.inputTokens, entry.outputTokens, entry.cacheTokens, entry.reasoningTokens, entry.totalTokens, entry.costEur.toFixed(6)].map(csvEscape).join(",")),
+          "date,projet,fournisseur,modele,libelle,input_tokens,output_tokens,cache_tokens,reasoning_tokens,total_tokens,cost_eur,estimated_cost_eur",
+          ...entries.map((entry) => [entry.usedAt, entry.projectName, entry.providerName || "", entry.modelName || "", entry.label, entry.inputTokens, entry.outputTokens, entry.cacheTokens, entry.reasoningTokens, entry.totalTokens, entry.costEur.toFixed(6), entry.estimatedCostEur.toFixed(6)].map(csvEscape).join(",")),
           "",
           `TOTAL,${csvEscape(projectName)},,,,${totals.inputTokens},${totals.outputTokens},${totals.cacheTokens},${totals.reasoningTokens},${totals.totalTokens},${totals.costEur.toFixed(6)}`,
         ].join("\n");
@@ -992,11 +1005,11 @@ export function listDashboardData(dbPath: string, userId: number, selectedProjec
   const usage = db.prepare(`SELECT coalesce(sum(input_tokens + output_tokens),0) as tokens, coalesce(sum(cost_eur),0) as cost FROM ai_usage_entries e JOIN project_members pm ON pm.project_id = e.project_id WHERE pm.user_id = ?${usageDateFilter.clause}`).get(userId) as RawUsageSumRow;
   const projectUsage = selectedProject ? db.prepare(`SELECT coalesce(sum(input_tokens + output_tokens),0) as tokens, coalesce(sum(cost_eur),0) as cost FROM ai_usage_entries WHERE project_id = ?${projectDateFilter.clause}`).get(selectedProject.id) as RawUsageSumRow : { tokens: 0, cost: 0 };
   const subscriptionMonthly = projectAiSetups.reduce((sum, setup) => sum + (setup.connectionType === "subscription" ? setup.monthlyCostEur : 0), 0);
-  const safePage = Math.max(1, Math.round(page));
+  const safePage = Number.isFinite(page) ? Math.max(1, Math.round(page)) : 1;
   const offset = (safePage - 1) * USAGE_PAGE_SIZE;
   const totalUsageRow = db.prepare(`SELECT count(*) as total FROM ai_usage_entries e JOIN project_members pm ON pm.project_id = e.project_id AND pm.user_id = ? WHERE (? IS NULL OR e.project_id = ?)${usageDateFilter.clause}`).get(userId, selectedProject?.id ?? null, selectedProject?.id ?? null) as { total: number };
   const totalUsageEntries = Number(totalUsageRow.total ?? 0);
-  const usageEntries = (db.prepare(`SELECT e.id, e.project_id as projectId, p.name as projectName, e.model_id as modelId, m.name as modelName, pr.name as providerName, e.label, e.input_tokens as inputTokens, e.output_tokens as outputTokens, e.cache_tokens as cacheTokens, e.reasoning_tokens as reasoningTokens, e.cost_eur as costEur, e.used_at as usedAt FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id JOIN project_members pm ON pm.project_id = e.project_id AND pm.user_id = ? LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE (? IS NULL OR e.project_id = ?)${usageDateFilter.clause} ORDER BY e.used_at DESC, e.id DESC LIMIT ? OFFSET ?`).all(userId, selectedProject?.id ?? null, selectedProject?.id ?? null, USAGE_PAGE_SIZE, offset) as RawEntryRow[]).map(rowToEntry);
+  const usageEntries = (db.prepare(`SELECT e.id, e.project_id as projectId, p.name as projectName, e.model_id as modelId, m.name as modelName, pr.name as providerName, e.label, e.input_tokens as inputTokens, e.output_tokens as outputTokens, e.cache_tokens as cacheTokens, e.reasoning_tokens as reasoningTokens, e.cost_eur as costEur, ${usageEstimatedCostSql("e")} as estimatedCostEur, e.used_at as usedAt FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id JOIN project_members pm ON pm.project_id = e.project_id AND pm.user_id = ? LEFT JOIN project_ai_setups s ON s.id = e.setup_id LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE (? IS NULL OR e.project_id = ?)${usageDateFilter.clause} ORDER BY e.used_at DESC, e.id DESC LIMIT ? OFFSET ?`).all(userId, selectedProject?.id ?? null, selectedProject?.id ?? null, USAGE_PAGE_SIZE, offset) as RawEntryRow[]).map(rowToEntry);
   const usageCharts = selectedProject ? _buildUsageChartData(db, userId, selectedProject.id, range) : null;
   const visualDashboard = _buildVisualDashboardData(db, userId, selectedProject?.id ?? null, range);
   db.close();

@@ -329,6 +329,14 @@ test("interface publique sans mention KIRO", () => {
   assert.equal(/KIRO/i.test(page), false);
 });
 
+test("section consommation : sélection projet via query string", () => {
+  const page = readFileSync(join(process.cwd(), "app", "consommation", "page.tsx"), "utf8");
+  assert.match(page, /searchParams/);
+  assert.match(page, /name=\"project\"/);
+  assert.match(page, /listDashboardData\(DB_PATH, user\.id, selectedProjectId/);
+  assert.match(page, /action=\"\/consommation\"/);
+});
+
 test("estimation automatique tokens/coût pour configuration API", () => {
   const { dbPath, cleanup } = tempDb();
   try {
@@ -656,7 +664,9 @@ test("Phase 4F : rapport consommation exportable CSV et sauvegardé", () => {
     assert.equal(report.totals.totalTokens, 1500);
     assert.equal(report.totals.inputTokens, 1200);
     assert.equal(report.totals.outputTokens, 300);
-    assert.match(report.content, /date,projet,fournisseur,modele,libelle,input_tokens,output_tokens,cache_tokens,reasoning_tokens,total_tokens,cost_eur/);
+    assert.equal(report.totals.costEur > 0, true);
+    assert.equal(report.totals.estimatedCostEur >= report.totals.costEur, true);
+    assert.match(report.content, /date,projet,fournisseur,modele,libelle,input_tokens,output_tokens,cache_tokens,reasoning_tokens,total_tokens,cost_eur,estimated_cost_eur/);
     assert.match(report.content, /resp_report/);
     assert.equal(report.mimeType, "text/csv; charset=utf-8");
     assert.throws(() => buildUsageReport(dbPath, other.id, project.id, "csv"), /Accès projet refusé/);
