@@ -1,6 +1,6 @@
 # TorquePilot AI Conso
 
-Dashboard local MVP pour suivre les projets, clients, statuts et consommations IA de Rudy / TorquePilot.
+Dashboard local MVP pour suivre les projets, clients, statuts et consommations IA TorquePilot.
 
 ## Démarrage local
 
