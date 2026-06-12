@@ -4,18 +4,21 @@ import { DB_PATH, USAGE_TIME_RANGES, getUserById, listDashboardData, normalizeUs
 import VisualDashboard from "../components/VisualDashboard";
 import DashboardShell from "../components/DashboardShell";
 import AutoRefresh from "./AutoRefresh";
-import { currentUserId, registerAction, loginAction, logoutAction, createProjectAction, createAiAccountAction, assignAiSetupAction, importFallbackUsageAction, getOpenAiStatusAction } from "./actions";
+import { currentUserId, googleSignInAction, logoutAction, createProjectAction, createAiAccountAction, assignAiSetupAction, importFallbackUsageAction, getOpenAiStatusAction } from "./actions";
+import { auth } from "../lib/auth";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-function AuthScreen({ error }: { error?: string }) {
+function AuthScreen() {
   return <main className="shell">
-    <section className="hero"><div><p className="eyebrow">Dashboard local sécurisé</p><h1>TorquePilot AI Conso</h1><p className="subtitle">Crée ton compte local puis pilote projets, comptes IA, abonnements/API et estimations de coût.</p></div><div className="badge">MVP auth</div></section>
-    {error && <p className="alert">{error}</p>}
+    <section className="hero"><div><p className="eyebrow">Dashboard local sécurisé</p><h1>TorquePilot AI Conso</h1><p className="subtitle">Connecte-toi avec ton compte Gmail pour accéder au dashboard.</p></div><div className="badge">Google Auth</div></section>
     <section className="authGrid">
-      <form action={registerAction} className="panel form"><h2>Inscription</h2><input name="email" type="email" placeholder="torquepilot34@gmail.com" required /><input name="password" type="password" placeholder="Mot de passe local" minLength={8} required /><button>Créer le compte</button></form>
-      <form action={loginAction} className="panel form"><h2>Connexion</h2><input name="email" type="email" placeholder="Email" required /><input name="password" type="password" placeholder="Mot de passe" required /><button>Entrer</button></form>
+      <form action={googleSignInAction} className="panel form">
+        <h2>Connexion</h2>
+        <p className="muted">Seuls les comptes Gmail autorisés peuvent accéder au dashboard.</p>
+        <button type="submit">Se connecter avec Gmail</button>
+      </form>
     </section>
   </main>;
 }
@@ -98,7 +101,9 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
   const params = await searchParams;
   const userId = await currentUserId();
   const user = userId ? getUserById(DB_PATH, userId) : null;
-  if (!user) return <AuthScreen error={params?.error} />;
+  const session = await auth();
+  const googleUser = session?.user;
+  if (!user) return <AuthScreen />;
 
   const selectedProjectId = params?.project ? Number(params.project) : undefined;
   const timeRange = normalizeUsageTimeRange(params?.range);
@@ -117,7 +122,7 @@ export default async function Home({ searchParams }: { searchParams?: Promise<{ 
   return <DashboardShell userEmail={user.email}>
     <main className="shell dashboardContent">
       <AutoRefresh intervalMs={10000} />
-      <section className="hero"><div><p className="eyebrow">Connecté : {user.email}</p><h1>TorquePilot AI Conso</h1><p className="subtitle">HOME allégée : KPIs, fallback live, projet, comptes et affectations essentielles. Les imports, rapports et catalogue IA sont dans la section COLLECTE.</p></div><form action={logoutAction}><button className="ghost">Déconnexion</button></form></section>
+      <section className="hero"><div><p className="eyebrow">Connecté : {googleUser?.name ?? user.email}{googleUser?.email ? ` · ${googleUser.email}` : ""}</p><h1>TorquePilot AI Conso</h1><p className="subtitle">HOME allégée : KPIs, fallback live, projet, comptes et affectations essentielles. Les imports, rapports et catalogue IA sont dans la section COLLECTE.</p></div><div style={{display:"flex",alignItems:"center",gap:"0.75rem"}}>{googleUser?.image && <img src={googleUser.image} alt="avatar" style={{width:36,height:36,borderRadius:"50%"}} />}<form action={logoutAction}><button className="ghost">Déconnexion</button></form></div></section>
       {params?.error && <p className="alert">{params.error}</p>}
       <section className="grid stats">{stats.map(([label, value, hint]) => <article className="card" key={label}><span>{label}</span><strong>{value}</strong><small>{hint}</small></article>)}</section>
 

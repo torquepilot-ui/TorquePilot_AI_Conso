@@ -301,6 +301,15 @@ export function getUserById(dbPath: string, userId: number): User | null {
   initDb(dbPath); const db = open(dbPath); const row = db.prepare("SELECT id, email, password_hash FROM users WHERE id = ?").get(userId) as RawUserRow | undefined; db.close();
   return row ? { id: row.id, email: row.email, passwordHash: row.password_hash } : null;
 }
+export function getUserByEmail(dbPath: string, email: string): User | null {
+  initDb(dbPath); const db = open(dbPath); const row = db.prepare("SELECT id, email, password_hash FROM users WHERE email = ?").get(email.trim().toLowerCase()) as RawUserRow | undefined; db.close();
+  return row ? { id: row.id, email: row.email, passwordHash: row.password_hash } : null;
+}
+export function createUserOAuth(dbPath: string, email: string): User {
+  initDb(dbPath); const db = open(dbPath); const normalized = email.trim().toLowerCase();
+  const result = db.prepare("INSERT INTO users(email, password_hash) VALUES (?, ?)").run(normalized, "oauth:" + randomBytes(32).toString("hex"));
+  db.close(); return { id: Number(result.lastInsertRowid), email: normalized, passwordHash: "" };
+}
 export function createProject(dbPath: string, userId: number, name: string, description = ""): Project {
   initDb(dbPath); const db = open(dbPath); const result = db.prepare("INSERT INTO projects(name, description, owner_user_id) VALUES (?, ?, ?)").run(name.trim(), description.trim(), userId); const id = Number(result.lastInsertRowid);
   db.prepare("INSERT INTO project_members(project_id, user_id, role) VALUES (?, ?, 'owner')").run(id, userId); db.close(); return { id, name: name.trim(), description: description.trim(), ownerUserId: userId };

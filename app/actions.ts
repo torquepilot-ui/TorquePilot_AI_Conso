@@ -1,26 +1,25 @@
 "use server";
 
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { makeSession, readSession } from "../lib/session";
+import { auth, signIn, signOut } from "../lib/auth";
 import {
   DB_PATH, USAGE_INBOX_DIR, USAGE_REPORTS_DIR,
-  assignAiAccountToProject, createAiAccount, createProject, createUser,
+  assignAiAccountToProject, createAiAccount, createProject,
   deleteAiAccount, deleteProject, deleteProjectAiSetup, deleteSavedUsageReport,
   estimateProjectUsage, importAutomaticUsage, importConnectorUsage, importUsageInbox,
-  updateAiAccount, updateProject, updateProjectAiSetup, verifyUser,
+  updateAiAccount, updateProject, updateProjectAiSetup,
 } from "../lib/db";
 import { checkProviderConnection, type ProviderConnectionStatus } from "../lib/provider-api";
 
-async function setSession(userId: number) {
-  const jar = await cookies();
-  jar.set("tp_session", makeSession(userId), { httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 30 });
+export async function currentUserId(): Promise<number | null> {
+  const session = await auth();
+  const id = (session as Record<string, unknown> | null)?.dbUserId;
+  return typeof id === "number" ? id : null;
 }
 
-export async function currentUserId() {
-  const jar = await cookies();
-  return readSession(jar.get("tp_session")?.value);
+export async function googleSignInAction() {
+  await signIn("google", { redirectTo: "/" });
 }
 
 function safeReturnTo(formData: FormData, fallback: string) {
@@ -28,25 +27,9 @@ function safeReturnTo(formData: FormData, fallback: string) {
   return value.startsWith("/") && !value.startsWith("//") ? value : fallback;
 }
 
-export async function registerAction(formData: FormData) {
-  const email = String(formData.get("email") || "");
-  const password = String(formData.get("password") || "");
-  if (!email || password.length < 8) redirect("/?error=Mot de passe minimum 8 caractères");
-  try { const user = createUser(DB_PATH, email, password); await setSession(user.id); } catch (err) { console.error("[registerAction]", err); redirect("/?error=Compte déjà existant ou saisie invalide"); }
-  redirect("/");
-}
-
-export async function loginAction(formData: FormData) {
-  const user = verifyUser(DB_PATH, String(formData.get("email") || ""), String(formData.get("password") || ""));
-  if (!user) redirect("/?error=Connexion refusée");
-  await setSession(user.id);
-  redirect("/");
-}
 
 export async function logoutAction() {
-  const jar = await cookies();
-  jar.delete("tp_session");
-  redirect("/");
+  await signOut({ redirectTo: "/" });
 }
 
 export async function createProjectAction(formData: FormData) {

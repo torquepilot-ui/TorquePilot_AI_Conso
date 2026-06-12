@@ -39,7 +39,7 @@ const EVENT_PATTERNS = [
       fallbackActive: true,
       activeProvider: normalize(match[1]),
       activeModel: 'deepseek/deepseek-v4-pro',
-      primaryModel: 'gpt-5.5',
+      primaryModel: 'deepseek-v4-pro',
     }),
   },
   {
@@ -49,7 +49,7 @@ const EVENT_PATTERNS = [
       fallbackActive: true,
       activeProvider: 'openrouter',
       activeModel: 'deepseek/deepseek-v4-pro',
-      primaryModel: 'gpt-5.5',
+      primaryModel: 'deepseek-v4-pro',
     }),
   },
   {
@@ -59,7 +59,7 @@ const EVENT_PATTERNS = [
       fallbackActive: normalize(match[1]) !== 'openai-codex',
       activeProvider: normalize(match[1]),
       activeModel: normalize(match[2]),
-      primaryModel: 'gpt-5.5',
+      primaryModel: 'deepseek-v4-pro',
     }),
   },
 ];
@@ -136,7 +136,7 @@ async function collectState() {
     activeProvider: latest?.activeProvider ?? null,
     activeModel: latest?.activeModel ?? null,
     primaryProvider: 'openai-codex',
-    primaryModel: latest?.primaryModel ?? 'gpt-5.5',
+    primaryModel: latest?.primaryModel ?? 'deepseek-v4-pro',
     fallbackProvider: 'openrouter',
     fallbackModel: 'deepseek/deepseek-v4-pro',
     lastEventAt: latest?.at ?? null,

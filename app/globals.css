@@ -41,7 +41,7 @@ body {
 
 .layout, .authGrid {
   display: grid;
-  grid-template-columns: 1.5fr .9fr;
+  grid-template-columns: 1fr 1fr;
   gap: 18px;
 }
 
@@ -371,7 +371,7 @@ button {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
   gap: 20px;
-  margin: 28px calc(50% - 50vw + 18px);
+  margin: 28px 0;
   padding: 20px;
   min-height: min(860px, calc(100vh - 36px));
   border: 1px solid rgba(255,255,255,.1);
@@ -489,7 +489,7 @@ button {
   .visualDashboard { margin-inline: 0; }
 }
 @media (max-width: 900px) {
-  .visualDashboard, .visualRadarGrid, .visualDonutGrid, .visualTable article, .visualTableHead { grid-template-columns: 1fr; }
+  .visualDashboard, .visualRadarGrid, .visualDonutGrid, .visualTable article, .visualTableHead { grid-template-columns: 1fr; min-height: auto; }
   .visualSidebar { position: static; min-height: auto; }
   .visualHeader, .visualTopbar, .timeRangePanel { flex-direction: column; align-items: stretch; }
   .rangeTabs { justify-content: stretch; }
@@ -500,6 +500,7 @@ button {
   .visualDashboard { padding: 12px; border-radius: 22px; }
   .visualSummaryGrid { grid-template-columns: 1fr; }
   .visualPanel, .visualTopbar, .visualSidebar { padding: 14px; }
+  .visualRadarGrid svg, .visualDonutGrid svg { max-height: 260px; }
 }
 
 

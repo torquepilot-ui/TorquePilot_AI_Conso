@@ -1,14 +1,13 @@
-import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { readSavedUsageReport, USAGE_REPORTS_DIR } from "../../../lib/db";
-import { readSession } from "../../../lib/session";
+import { auth } from "../../../lib/auth";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const jar = await cookies();
-  const userId = readSession(jar.get("tp_session")?.value);
-  if (!userId) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
+  const session = await auth();
+  const userId = (session as Record<string, unknown> | null)?.dbUserId;
+  if (typeof userId !== "number") return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
 
   const fileName = request.nextUrl.searchParams.get("file") || "";
   try {
