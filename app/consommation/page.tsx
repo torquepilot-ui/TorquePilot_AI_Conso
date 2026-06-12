@@ -4,6 +4,7 @@ import DashboardSectionPage from "../../components/DashboardSectionPage";
 import { currentUserId } from "../actions";
 import { DB_PATH, USAGE_TIME_RANGES, getUserById, listDashboardData, normalizeUsageTimeRange } from "../../lib/db";
 import { buildDashboardSectionSummary, euro, integer, readHermesFallbackState } from "../../lib/dashboard-section-data";
+import { ConsommationLineChart, ConsommationModelChart } from "./ConsommationCharts";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -126,27 +127,13 @@ export default async function ConsommationPage({ searchParams }: { searchParams?
 
     <section className="consumptionAnalyticsGrid">
       <article className="panel visualPanel consumptionChartPanel">
-        <div className="visualHeader"><div><p className="eyebrow">Tendance</p><h2>Tokens par jour</h2><p>Vue rapide de la pression d’usage sur les derniers points de la période.</p></div><span className="pill">{dailyRows.length} points</span></div>
-        <div className="barChart consumptionBars">
-          {dailyRows.map((point) => <div className="barRow consumptionBarRow" key={point.date}><span>{point.date}</span><div className="barTrack"><i style={barWidth(point.maxRatio)} /></div><strong>{integer(point.totalTokens)} tok</strong></div>)}
-          {!dailyRows.length && <p className="muted">Aucun point temporel pour cette période.</p>}
-        </div>
+        <div className="visualHeader"><div><p className="eyebrow">Tendance · Recharts</p><h2>Tokens par jour</h2><p>Courbe d’usage sur les derniers points de la période.</p></div><span className="pill">{dailyRows.length} points</span></div>
+        <ConsommationLineChart daily={dailyRows.map((r) => ({ date: r.date, totalTokens: r.totalTokens, costEur: r.costEur }))} />
       </article>
 
       <article className="panel visualPanel consumptionChartPanel">
-        <div className="visualHeader"><div><p className="eyebrow">Répartition</p><h2>Providers / modèles</h2><p>Lecture immédiate des sources qui consomment le plus.</p></div></div>
-        <div className="consumptionBreakdowns">
-          <div>
-            <h3>Providers</h3>
-            {providerRows.map((row) => <div className="miniBar" key={row.name}><div><span>{row.name}</span><strong>{percent(row.totalTokens, selectedTotalTokens)} · {integer(row.totalTokens)} tok</strong></div><div className="barTrack"><i style={barWidth(row.maxRatio)} /></div></div>)}
-            {!providerRows.length && <p className="muted">Aucun provider détecté.</p>}
-          </div>
-          <div>
-            <h3>Modèles</h3>
-            {modelRows.map((row) => <div className="miniBar" key={row.name}><div><span>{row.name}</span><strong>{integer(row.totalTokens)} tok · {euro(row.costEur)}</strong></div><div className="barTrack"><i style={barWidth(row.maxRatio)} /></div></div>)}
-            {!modelRows.length && <p className="muted">Aucun modèle détecté.</p>}
-          </div>
-        </div>
+        <div className="visualHeader"><div><p className="eyebrow">Répartition · Recharts</p><h2>Coût par modèle</h2><p>Top modèles les plus consommateurs sur la période.</p></div></div>
+        <ConsommationModelChart models={modelRows.map((r) => ({ name: r.name, totalTokens: r.totalTokens, costEur: r.costEur }))} />
       </article>
     </section>
 

@@ -310,6 +310,17 @@ export function createUserOAuth(dbPath: string, email: string): User {
   const result = db.prepare("INSERT INTO users(email, password_hash) VALUES (?, ?)").run(normalized, "oauth:" + randomBytes(32).toString("hex"));
   db.close(); return { id: Number(result.lastInsertRowid), email: normalized, passwordHash: "" };
 }
+export type MonthlyKpi = { currentMonthCost: number; prevMonthCost: number; currentMonthTokens: number };
+export function getMonthlyKpi(dbPath: string, userId: number): MonthlyKpi {
+  initDb(dbPath); const db = open(dbPath);
+  const now = new Date(); const y = now.getFullYear(); const m = now.getMonth() + 1;
+  const cur = `${y}-${String(m).padStart(2, "0")}`;
+  const prev = new Date(y, m - 2, 1); const prevYM = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
+  type Row = { cost: number; tokens: number };
+  function q(ym: string): Row { return (db.prepare("SELECT COALESCE(SUM(cost_eur),0) as cost, COALESCE(SUM(input_tokens+output_tokens),0) as tokens FROM ai_usage_entries e JOIN project_members pm ON pm.project_id=e.project_id AND pm.user_id=? WHERE strftime('%Y-%m',e.used_at)=?").get(userId, ym) as Row | undefined) ?? { cost: 0, tokens: 0 }; }
+  const c = q(cur); const p = q(prevYM); db.close();
+  return { currentMonthCost: Number(c.cost ?? 0), prevMonthCost: Number(p.cost ?? 0), currentMonthTokens: Number(c.tokens ?? 0) };
+}
 export function createProject(dbPath: string, userId: number, name: string, description = ""): Project {
   initDb(dbPath); const db = open(dbPath); const result = db.prepare("INSERT INTO projects(name, description, owner_user_id) VALUES (?, ?, ?)").run(name.trim(), description.trim(), userId); const id = Number(result.lastInsertRowid);
   db.prepare("INSERT INTO project_members(project_id, user_id, role) VALUES (?, ?, 'owner')").run(id, userId); db.close(); return { id, name: name.trim(), description: description.trim(), ownerUserId: userId };
