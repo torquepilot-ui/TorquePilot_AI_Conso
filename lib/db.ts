@@ -1039,3 +1039,157 @@ export function listDashboardData(dbPath: string, userId: number, selectedProjec
 export const DB_PATH = defaultDbPath;
 export const USAGE_INBOX_DIR = defaultUsageInboxDir;
 export const USAGE_REPORTS_DIR = defaultUsageReportsDir;
+
+// ─── Agents ───────────────────────────────────────────────────────────────────
+
+export type AgentProvider = "deepseek" | "openrouter" | "openai";
+export type AgentStatus = "active" | "inactive" | "error";
+export type Agent = {
+  id: string;
+  userEmail: string;
+  name: string;
+  provider: AgentProvider;
+  model: string;
+  status: AgentStatus;
+  createdAt: string;
+  lastTestAt: string | null;
+};
+
+type RawAgentRow = {
+  id: string;
+  user_email: string;
+  name: string;
+  provider: string;
+  model: string;
+  status: string;
+  created_at: string;
+  last_test_at: string | null;
+};
+
+function xorCipher(input: string, secret: string): string {
+  if (!secret) return input;
+  const inputBuf = Buffer.from(input, "utf8");
+  const secretBuf = Buffer.from(secret, "utf8");
+  const result = Buffer.alloc(inputBuf.length);
+  for (let i = 0; i < inputBuf.length; i++) {
+    result[i] = inputBuf[i] ^ secretBuf[i % secretBuf.length];
+  }
+  return result.toString("base64");
+}
+
+function encryptApiKey(key: string): string {
+  return xorCipher(key, process.env.NEXTAUTH_SECRET ?? "");
+}
+
+export function decryptApiKey(encrypted: string): string {
+  const buf = Buffer.from(encrypted, "base64");
+  const secret = process.env.NEXTAUTH_SECRET ?? "";
+  const secretBuf = Buffer.from(secret, "utf8");
+  const result = Buffer.alloc(buf.length);
+  for (let i = 0; i < buf.length; i++) {
+    result[i] = buf[i] ^ secretBuf[i % secretBuf.length];
+  }
+  return result.toString("utf8");
+}
+
+function initAgentsTable(db: ReturnType<typeof open>) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS agents (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      name TEXT NOT NULL,
+      provider TEXT NOT NULL CHECK(provider IN ('deepseek','openrouter','openai')),
+      model TEXT NOT NULL,
+      api_key_encrypted TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'inactive' CHECK(status IN ('active','inactive','error')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_test_at TEXT
+    );
+  `);
+}
+
+function rowToAgent(row: RawAgentRow): Agent {
+  return {
+    id: String(row.id),
+    userEmail: String(row.user_email),
+    name: String(row.name),
+    provider: row.provider as AgentProvider,
+    model: String(row.model),
+    status: row.status as AgentStatus,
+    createdAt: String(row.created_at),
+    lastTestAt: row.last_test_at ? String(row.last_test_at) : null,
+  };
+}
+
+export function createAgent(
+  dbPath: string,
+  userEmail: string,
+  name: string,
+  provider: AgentProvider,
+  model: string,
+  apiKey: string
+): Agent {
+  const db = open(dbPath);
+  try {
+    initAgentsTable(db);
+    const id = randomBytes(8).toString("hex");
+    const encryptedKey = encryptApiKey(apiKey);
+    db.prepare(
+      `INSERT INTO agents(id, user_email, name, provider, model, api_key_encrypted) VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(id, userEmail.toLowerCase(), name.trim(), provider, model.trim(), encryptedKey);
+    return rowToAgent(
+      db.prepare(`SELECT id, user_email, name, provider, model, status, created_at, last_test_at FROM agents WHERE id = ?`).get(id) as RawAgentRow
+    );
+  } finally {
+    db.close();
+  }
+}
+
+export function getAgentsByUser(dbPath: string, userEmail: string): Agent[] {
+  const db = open(dbPath);
+  try {
+    initAgentsTable(db);
+    const rows = db.prepare(
+      `SELECT id, user_email, name, provider, model, status, created_at, last_test_at FROM agents WHERE user_email = ? ORDER BY created_at DESC`
+    ).all(userEmail.toLowerCase()) as RawAgentRow[];
+    return rows.map(rowToAgent);
+  } finally {
+    db.close();
+  }
+}
+
+export function getAgentApiKey(dbPath: string, id: string, userEmail: string): string | null {
+  const db = open(dbPath);
+  try {
+    initAgentsTable(db);
+    const row = db.prepare(`SELECT api_key_encrypted FROM agents WHERE id = ? AND user_email = ?`).get(id, userEmail.toLowerCase()) as { api_key_encrypted: string } | undefined;
+    if (!row) return null;
+    return decryptApiKey(row.api_key_encrypted);
+  } finally {
+    db.close();
+  }
+}
+
+export function updateAgentStatus(dbPath: string, id: string, userEmail: string, status: AgentStatus): boolean {
+  const db = open(dbPath);
+  try {
+    initAgentsTable(db);
+    const result = db.prepare(
+      `UPDATE agents SET status = ?, last_test_at = datetime('now') WHERE id = ? AND user_email = ?`
+    ).run(status, id, userEmail.toLowerCase());
+    return result.changes > 0;
+  } finally {
+    db.close();
+  }
+}
+
+export function deleteAgent(dbPath: string, id: string, userEmail: string): boolean {
+  const db = open(dbPath);
+  try {
+    initAgentsTable(db);
+    const result = db.prepare(`DELETE FROM agents WHERE id = ? AND user_email = ?`).run(id, userEmail.toLowerCase());
+    return result.changes > 0;
+  } finally {
+    db.close();
+  }
+}
