@@ -1,0 +1,15 @@
+{
+  "landing": {
+    "eyebrow": "AI DASHBOARD",
+    "title": "Take control of your <accent>AI costs</accent>",
+    "subtitle": "Consolidate, analyze and optimize your artificial intelligence spending in one single dashboard.",
+    "feature1": "Multi-provider consolidation",
+    "feature2": "Real-time budget alerts",
+    "feature3": "Automated reports & exports",
+    "signIn": "Sign in with Google",
+    "privacy": "No data shared",
+    "version": "TorquePilot AI · v1.0",
+    "copyright": "© 2026 TorquePilot AI",
+    "beta": "Beta"
+  }
+}

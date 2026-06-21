@@ -4,6 +4,7 @@ import { DB_PATH, getUserByEmail, createUserOAuth } from "./db";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
+  basePath: "/api/auth",
   callbacks: {
     ...authConfig.callbacks,
     async jwt({ token, user }) {

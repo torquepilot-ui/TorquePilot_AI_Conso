@@ -1,0 +1,15 @@
+{
+  "landing": {
+    "eyebrow": "DASHBOARD IA",
+    "title": "Pilotez vos <accent>coûts IA</accent>",
+    "subtitle": "Consolidez, analysez et optimisez vos dépenses en intelligence artificielle sur un seul tableau de bord.",
+    "feature1": "Consolidation multi-providers",
+    "feature2": "Alertes budget en temps réel",
+    "feature3": "Rapports & exports automatisés",
+    "signIn": "Connexion avec Google",
+    "privacy": "Aucune donnée partagée",
+    "version": "TorquePilot AI · v1.0",
+    "copyright": "© 2026 TorquePilot AI",
+    "beta": "Beta"
+  }
+}

@@ -3,6 +3,7 @@ import { DB_PATH, getUserById, getMonthlyKpi } from "../lib/db";
 import { auth } from "../lib/auth";
 import { currentUserId } from "./actions";
 import DashboardShell from "../components/DashboardShell";
+import LandingPage from "../components/LandingPage";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -21,29 +22,7 @@ export default async function Home() {
   const userId = await currentUserId();
   const user = userId ? getUserById(DB_PATH, userId) : null;
   if (!user) {
-    return (
-      <html lang="fr">
-        <body style={{
-          margin: 0, display: "flex", alignItems: "center", justifyContent: "center",
-          minHeight: "100vh", background: "#0a0a0f", color: "#e0e0e0",
-          fontFamily: "system-ui, sans-serif"
-        }}>
-          <main style={{ textAlign: "center", maxWidth: 400, padding: 24 }}>
-            <h1 style={{ fontSize: "1.5rem", marginBottom: 8 }}>TorquePilot AI</h1>
-            <p style={{ color: "#888", marginBottom: 24 }}>
-              Connecte-toi pour accéder au dashboard.
-            </p>
-            <a href="/api/auth/signin/google" style={{
-              display: "inline-block", padding: "12px 32px",
-              background: "#1a73e8", color: "#fff", borderRadius: 8,
-              textDecoration: "none", fontWeight: 600, fontSize: "1rem"
-            }}>
-              🔐 Connexion avec Google
-            </a>
-          </main>
-        </body>
-      </html>
-    );
+    return <LandingPage />;
   }
 
   const session = await auth();
