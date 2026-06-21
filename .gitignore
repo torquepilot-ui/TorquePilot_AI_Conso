@@ -12,4 +12,5 @@ data/*.sqlite
 data/*.sqlite-*
 data/usage-inbox/
 data/usage-reports/
+public/hermes-fallback-state.json
 tsconfig.tsbuildinfo

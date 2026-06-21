@@ -59,14 +59,17 @@ export type UsageEntry = {
   label: string;
   inputTokens: number;
   outputTokens: number;
+  cacheTokens: number;
+  reasoningTokens: number;
   totalTokens: number;
   costEur: number;
+  estimatedCostEur: number;
   usedAt: string;
 };
-export type UsageInput = { projectId: number; modelId?: number | null; label: string; inputTokens: number; outputTokens: number; costEur: number; usedAt?: string };
+export type UsageInput = { projectId: number; modelId?: number | null; label: string; inputTokens: number; outputTokens: number; cacheTokens?: number; reasoningTokens?: number; costEur: number; usedAt?: string };
 export type AiAccountInput = { providerId?: number | null; name: string; connectionType: ConnectionType; subscriptionName?: string; monthlyCostEur?: number; notes?: string };
 export type ProjectAiSetupInput = { projectId: number; accountId: number; modelId?: number | null; connectionType?: ConnectionType; label?: string; inputPricePerMillion?: number | null; outputPricePerMillion?: number | null };
-export type EstimateInput = { projectId: number; setupId: number; label: string; inputText: string; outputText: string; usedAt?: string };
+export type EstimateInput = { projectId: number; setupId: number; label: string; inputText: string; outputText: string; inputTokens?: number; outputTokens?: number; cacheTokens?: number; reasoningTokens?: number; usedAt?: string };
 export type AutomaticUsageImportInput = { projectId: number; setupId: number; sourceName: string; rawExport: string; usedAt?: string };
 export type UsageConnector = "generic" | "openai" | "anthropic" | "google" | "ollama" | "local" | "hermes";
 export type ConnectorUsageImportInput = AutomaticUsageImportInput & { connector: UsageConnector };
@@ -77,16 +80,33 @@ export type UsageInboxImportInput = { rootDir: string; projectId: number; setupI
 export type UsageImportRun = { id: number; userId: number; projectId: number; setupId: number; connector: UsageConnector; sourcePath: string; status: "success" | "failed"; importedCount: number; errorMessage: string | null; createdAt: string };
 export type UsageInboxImportResult = AutomaticUsageImportResult & { processedFiles: number; failedFiles: number; runs: UsageImportRun[] };
 export type UsageCollectorHealth = { rootDir: string; pendingFiles: number; processedFiles: number; failedFiles: number; lastRun: UsageImportRun | null; recentRuns: UsageImportRun[] };
-export type UsageInboxPreviewFile = { connector: UsageConnector; fileName: string; sourcePath: string; sizeBytes: number; status: "ready" | "failed"; detectedCount: number; inputTokens: number; outputTokens: number; totalTokens: number; sampleLabels: string[]; errorMessage: string | null };
-export type UsageInboxPreview = { rootDir: string; folders: string[]; files: UsageInboxPreviewFile[]; totals: { files: number; readyFiles: number; failedFiles: number; detectedCount: number; inputTokens: number; outputTokens: number; totalTokens: number } };
+export type UsageInboxPreviewFile = { connector: UsageConnector; fileName: string; sourcePath: string; sizeBytes: number; status: "ready" | "failed"; detectedCount: number; inputTokens: number; outputTokens: number; cacheTokens: number; reasoningTokens: number; totalTokens: number; sampleLabels: string[]; errorMessage: string | null };
+export type UsageInboxPreview = { rootDir: string; folders: string[]; files: UsageInboxPreviewFile[]; totals: { files: number; readyFiles: number; failedFiles: number; detectedCount: number; inputTokens: number; outputTokens: number; cacheTokens: number; reasoningTokens: number; totalTokens: number } };
 export type UsageReportFormat = "csv" | "json";
-export type UsageReport = { projectId: number; projectName: string; generatedAt: string; format: UsageReportFormat; mimeType: string; fileName: string; totals: { entries: number; inputTokens: number; outputTokens: number; totalTokens: number; costEur: number }; entries: UsageEntry[]; content: string };
+export type UsageReport = { projectId: number; projectName: string; generatedAt: string; format: UsageReportFormat; mimeType: string; fileName: string; totals: { entries: number; inputTokens: number; outputTokens: number; cacheTokens: number; reasoningTokens: number; totalTokens: number; costEur: number; estimatedCostEur: number }; entries: UsageEntry[]; content: string };
 export type SavedUsageReport = UsageReport & { filePath: string };
 export type SavedUsageReportSummary = { fileName: string; format: UsageReportFormat; sizeBytes: number; createdAt: string; filePath: string };
 export type DownloadedUsageReport = { fileName: string; format: UsageReportFormat; mimeType: string; sizeBytes: number; content: string };
-export type UsageChartPoint = { date: string; inputTokens: number; outputTokens: number; totalTokens: number; costEur: number; entries: number; maxRatio: number };
-export type UsageChartBreakdown = { name: string; inputTokens: number; outputTokens: number; totalTokens: number; costEur: number; entries: number; maxRatio: number };
-export type UsageChartData = { projectId: number; projectName: string; totals: { entries: number; inputTokens: number; outputTokens: number; totalTokens: number; costEur: number }; daily: UsageChartPoint[]; topProviders: UsageChartBreakdown[]; topModels: UsageChartBreakdown[] };
+export type UsageChartPoint = { date: string; inputTokens: number; outputTokens: number; cacheTokens: number; reasoningTokens: number; totalTokens: number; costEur: number; entries: number; maxRatio: number };
+export type UsageChartBreakdown = { name: string; inputTokens: number; outputTokens: number; cacheTokens: number; reasoningTokens: number; totalTokens: number; costEur: number; entries: number; maxRatio: number };
+export type UsageTimeRange = "24h" | "7d" | "30d" | "all";
+export const USAGE_TIME_RANGES: { id: UsageTimeRange; label: string; hint: string }[] = [
+  { id: "24h", label: "24h", hint: "dernières 24 heures" },
+  { id: "7d", label: "7j", hint: "7 derniers jours" },
+  { id: "30d", label: "30j", hint: "30 derniers jours" },
+  { id: "all", label: "All-time", hint: "historique complet" },
+];
+export type UsageChartData = { projectId: number; projectName: string; timeRange: UsageTimeRange; totals: { entries: number; inputTokens: number; outputTokens: number; cacheTokens: number; reasoningTokens: number; totalTokens: number; costEur: number }; daily: UsageChartPoint[]; topProviders: UsageChartBreakdown[]; topModels: UsageChartBreakdown[] };
+export type VisualDashboardAgent = {
+  id: string;
+  name: string;
+  color: string;
+  glow: string;
+  radar: { input: number; output: number; cache: number; reasoning: number; cost: number; sessions: number };
+  donut: { label: string; value: number; color: string; pct: number }[];
+  models: { name: string; tokens: number; cost: number; sessions: number; lastUsed: string }[];
+};
+export type VisualDashboardData = { timeRange: UsageTimeRange; agents: VisualDashboardAgent[] };
 
 // Private raw SQLite row types — never exported
 type PragmaInfoRow = { name: string };
@@ -95,14 +115,16 @@ type RawProviderIdRow = { id: number };
 type RawModelPriceRow = { input_price_per_million: number | null; output_price_per_million: number | null };
 type RawAccountDbRow = { id: number; user_id: number; provider_id: number | null; name: string; connection_type: string; subscription_name: string | null; monthly_cost_eur: number; notes: string | null };
 type RawSetupProjectRow = { projectId: number };
-type RawEntryRow = { id: number; projectId: number; projectName: string; modelId: number | null; modelName: string | null; providerName: string | null; label: string; inputTokens: number; outputTokens: number; costEur: number; usedAt: string };
+type RawEntryRow = { id: number; projectId: number; projectName: string; modelId: number | null; modelName: string | null; providerName: string | null; label: string; inputTokens: number; outputTokens: number; cacheTokens?: number | null; reasoningTokens?: number | null; costEur: number; estimatedCostEur?: number | null; usedAt: string };
 type RawAccountRow = { id: number; userId: number; providerId: number | null; providerName: string | null; name: string; connectionType: string; subscriptionName: string | null; monthlyCostEur: number; notes: string | null };
 type RawSetupRow = { id: number; projectId: number; projectName: string; accountId: number; accountName: string; providerName: string | null; modelId: number | null; modelName: string | null; connectionType: string; subscriptionName: string | null; monthlyCostEur: number; inputPricePerMillion: number | null; outputPricePerMillion: number | null; label: string };
 type RawRunRow = { id: number; userId: number; projectId: number; setupId: number; connector: string; sourcePath: string; status: string; importedCount: number; errorMessage: string | null; createdAt: string };
 type RawProjectRow = { id: number; name: string };
-type RawTotalsRow = { entries: number; inputTokens: number; outputTokens: number; totalTokens: number; costEur: number };
-type RawChartRow = { date: string; entries: number; inputTokens: number; outputTokens: number; totalTokens: number; costEur: number };
-type RawBreakdownRow = { name: string; entries: number; inputTokens: number; outputTokens: number; totalTokens: number; costEur: number };
+type RawTotalsRow = { entries: number; inputTokens: number; outputTokens: number; cacheTokens: number; reasoningTokens: number; totalTokens: number; costEur: number };
+type RawChartRow = { date: string; entries: number; inputTokens: number; outputTokens: number; cacheTokens: number; reasoningTokens: number; totalTokens: number; costEur: number };
+type RawBreakdownRow = { name: string; entries: number; inputTokens: number; outputTokens: number; cacheTokens: number; reasoningTokens: number; totalTokens: number; costEur: number };
+type RawVisualAgentRow = { agentName: string; entries: number; inputTokens: number; outputTokens: number; cacheTokens: number; reasoningTokens: number; totalTokens: number; costEur: number; lastUsed: string };
+type RawVisualModelRow = { agentName: string; modelName: string; entries: number; tokens: number; costEur: number; lastUsed: string };
 type RawUsageSumRow = { tokens: number; cost: number };
 type RawHermesSessionRow = { id: string; source: string | null; model: string | null; started_at: string | number | null; ended_at: string | number | null; input_tokens: number | null; output_tokens: number | null; cache_read_tokens: number | null; cache_write_tokens: number | null; reasoning_tokens: number | null; billing_provider: string | null; estimated_cost_usd: number | null; actual_cost_usd: number | null; api_call_count: number | null; tool_call_count: number | null };
 type RawHermesPreviewRow = { sessions: number; importableSessions: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; reasoningTokens: number; estimatedCostUsd: number; actualCostUsd: number; startedAt: string | null; endedAt: string | null };
@@ -152,9 +174,8 @@ function migrate(db: DatabaseSync) {
   if (!columnExists(db, "ai_usage_entries", "account_id")) db.exec("ALTER TABLE ai_usage_entries ADD COLUMN account_id INTEGER REFERENCES ai_accounts(id)");
   if (!columnExists(db, "ai_usage_entries", "setup_id")) db.exec("ALTER TABLE ai_usage_entries ADD COLUMN setup_id INTEGER REFERENCES project_ai_setups(id)");
   if (!columnExists(db, "ai_usage_entries", "estimation_method")) db.exec("ALTER TABLE ai_usage_entries ADD COLUMN estimation_method TEXT");
-  if (!columnExists(db, "ai_usage_entries", "source_connector")) db.exec("ALTER TABLE ai_usage_entries ADD COLUMN source_connector TEXT");
-  if (!columnExists(db, "ai_usage_entries", "source_id")) db.exec("ALTER TABLE ai_usage_entries ADD COLUMN source_id TEXT");
-  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_usage_source_dedupe ON ai_usage_entries(project_id, source_connector, source_id) WHERE source_connector IS NOT NULL AND source_id IS NOT NULL");
+  if (!columnExists(db, "ai_usage_entries", "cache_tokens")) db.exec("ALTER TABLE ai_usage_entries ADD COLUMN cache_tokens INTEGER NOT NULL DEFAULT 0");
+  if (!columnExists(db, "ai_usage_entries", "reasoning_tokens")) db.exec("ALTER TABLE ai_usage_entries ADD COLUMN reasoning_tokens INTEGER NOT NULL DEFAULT 0");
 }
 
 export function initDb(dbPath = defaultDbPath) {
@@ -210,6 +231,8 @@ export function initDb(dbPath = defaultDbPath) {
       label TEXT NOT NULL,
       input_tokens INTEGER NOT NULL DEFAULT 0,
       output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_tokens INTEGER NOT NULL DEFAULT 0,
+      reasoning_tokens INTEGER NOT NULL DEFAULT 0,
       cost_eur REAL NOT NULL DEFAULT 0,
       estimation_method TEXT,
       used_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -249,6 +272,16 @@ function toNonNegativeInteger(value: number) { const n = Number(value); return !
 function toNonNegativeMoney(value: number) { const n = Number(value); return !Number.isFinite(n) || n < 0 ? 0 : Math.round(n * 1000000) / 1000000; }
 function toNullableMoney(value: unknown) { const n = Number(value); return Number.isFinite(n) && n >= 0 ? Math.round(n * 1000000) / 1000000 : null; }
 function normalizeConnectionType(value: string | undefined): ConnectionType { return value === "api" || value === "local" ? value : "subscription"; }
+function usageEstimatedCostSql(alias = "e") {
+  return `CASE
+    WHEN ${alias}.cost_eur > 0 THEN ${alias}.cost_eur
+    WHEN coalesce(s.input_price_per_million, m.input_price_per_million) IS NOT NULL AND coalesce(s.output_price_per_million, m.output_price_per_million) IS NOT NULL
+      THEN ((CASE WHEN ${alias}.input_tokens > 0 THEN ${alias}.input_tokens ELSE ${alias}.cache_tokens END) / 1000000.0) * coalesce(s.input_price_per_million, m.input_price_per_million)
+        + ((CASE WHEN ${alias}.output_tokens > 0 THEN ${alias}.output_tokens ELSE ${alias}.reasoning_tokens END) / 1000000.0) * coalesce(s.output_price_per_million, m.output_price_per_million)
+    ELSE 0
+  END`;
+}
+
 export function estimateTokensFromText(text: string, providerName?: string | null) {
   const clean = text.trim();
   if (!clean) return 0;
@@ -258,7 +291,9 @@ export function estimateTokensFromText(text: string, providerName?: string | nul
 
 function rowToEntry(row: RawEntryRow): UsageEntry {
   const inputTokens = Number(row.inputTokens ?? 0); const outputTokens = Number(row.outputTokens ?? 0);
-  return { id: Number(row.id), projectId: Number(row.projectId), projectName: String(row.projectName), modelId: row.modelId == null ? null : Number(row.modelId), modelName: row.modelName == null ? null : String(row.modelName), providerName: row.providerName == null ? null : String(row.providerName), label: String(row.label), inputTokens, outputTokens, totalTokens: inputTokens + outputTokens, costEur: Number(row.costEur ?? 0), usedAt: String(row.usedAt) };
+  const cacheTokens = Number(row.cacheTokens ?? 0); const reasoningTokens = Number(row.reasoningTokens ?? 0);
+  const costEur = Number(row.costEur ?? 0);
+  return { id: Number(row.id), projectId: Number(row.projectId), projectName: String(row.projectName), modelId: row.modelId == null ? null : Number(row.modelId), modelName: row.modelName == null ? null : String(row.modelName), providerName: row.providerName == null ? null : String(row.providerName), label: String(row.label), inputTokens, outputTokens, cacheTokens, reasoningTokens, totalTokens: inputTokens + outputTokens, costEur, estimatedCostEur: toNonNegativeMoney(Number(row.estimatedCostEur ?? costEur)), usedAt: String(row.usedAt) };
 }
 function rowToAccount(row: RawAccountRow): AiAccount {
   return { id: Number(row.id), userId: Number(row.userId), providerId: row.providerId == null ? null : Number(row.providerId), providerName: row.providerName == null ? null : String(row.providerName), name: String(row.name), connectionType: normalizeConnectionType(row.connectionType), subscriptionName: row.subscriptionName == null ? null : String(row.subscriptionName), monthlyCostEur: Number(row.monthlyCostEur ?? 0), notes: row.notes == null ? null : String(row.notes) };
@@ -279,6 +314,26 @@ export function verifyUser(dbPath: string, email: string, password: string): Use
 export function getUserById(dbPath: string, userId: number): User | null {
   initDb(dbPath); const db = open(dbPath); const row = db.prepare("SELECT id, email, password_hash FROM users WHERE id = ?").get(userId) as RawUserRow | undefined; db.close();
   return row ? { id: row.id, email: row.email, passwordHash: row.password_hash } : null;
+}
+export function getUserByEmail(dbPath: string, email: string): User | null {
+  initDb(dbPath); const db = open(dbPath); const row = db.prepare("SELECT id, email, password_hash FROM users WHERE email = ?").get(email.trim().toLowerCase()) as RawUserRow | undefined; db.close();
+  return row ? { id: row.id, email: row.email, passwordHash: row.password_hash } : null;
+}
+export function createUserOAuth(dbPath: string, email: string): User {
+  initDb(dbPath); const db = open(dbPath); const normalized = email.trim().toLowerCase();
+  const result = db.prepare("INSERT INTO users(email, password_hash) VALUES (?, ?)").run(normalized, "oauth:" + randomBytes(32).toString("hex"));
+  db.close(); return { id: Number(result.lastInsertRowid), email: normalized, passwordHash: "" };
+}
+export type MonthlyKpi = { currentMonthCost: number; prevMonthCost: number; currentMonthTokens: number };
+export function getMonthlyKpi(dbPath: string, userId: number): MonthlyKpi {
+  initDb(dbPath); const db = open(dbPath);
+  const now = new Date(); const y = now.getFullYear(); const m = now.getMonth() + 1;
+  const cur = `${y}-${String(m).padStart(2, "0")}`;
+  const prev = new Date(y, m - 2, 1); const prevYM = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
+  type Row = { cost: number; tokens: number };
+  function q(ym: string): Row { return (db.prepare("SELECT COALESCE(SUM(cost_eur),0) as cost, COALESCE(SUM(input_tokens+output_tokens),0) as tokens FROM ai_usage_entries e JOIN project_members pm ON pm.project_id=e.project_id AND pm.user_id=? WHERE strftime('%Y-%m',e.used_at)=?").get(userId, ym) as Row | undefined) ?? { cost: 0, tokens: 0 }; }
+  const c = q(cur); const p = q(prevYM); db.close();
+  return { currentMonthCost: Number(c.cost ?? 0), prevMonthCost: Number(p.cost ?? 0), currentMonthTokens: Number(c.tokens ?? 0) };
 }
 export function createProject(dbPath: string, userId: number, name: string, description = ""): Project {
   initDb(dbPath); const db = open(dbPath); const result = db.prepare("INSERT INTO projects(name, description, owner_user_id) VALUES (?, ?, ?)").run(name.trim(), description.trim(), userId); const id = Number(result.lastInsertRowid);
@@ -458,7 +513,7 @@ export function recordUsageEntry(dbPath: string, userId: number, input: UsageInp
     if (!db.prepare("SELECT 1 FROM project_members WHERE user_id = ? AND project_id = ?").get(userId, input.projectId)) throw new Error("Accès projet refusé");
     const modelId = input.modelId ? Number(input.modelId) : null;
     if (modelId && !db.prepare("SELECT 1 FROM ai_models WHERE id = ?").get(modelId)) throw new Error("Modèle IA inconnu");
-    const result = db.prepare(`INSERT INTO ai_usage_entries(project_id, model_id, label, input_tokens, output_tokens, cost_eur, used_at) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(input.projectId, modelId, input.label.trim() || "Usage estimé", toNonNegativeInteger(input.inputTokens), toNonNegativeInteger(input.outputTokens), toNonNegativeMoney(input.costEur), input.usedAt?.trim() || new Date().toISOString().slice(0, 10));
+    const result = db.prepare(`INSERT INTO ai_usage_entries(project_id, model_id, label, input_tokens, output_tokens, cache_tokens, reasoning_tokens, cost_eur, used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(input.projectId, modelId, input.label.trim() || "Usage estimé", toNonNegativeInteger(input.inputTokens), toNonNegativeInteger(input.outputTokens), toNonNegativeInteger(input.cacheTokens ?? 0), toNonNegativeInteger(input.reasoningTokens ?? 0), toNonNegativeMoney(input.costEur), input.usedAt?.trim() || new Date().toISOString().slice(0, 10));
     return usageById(db, Number(result.lastInsertRowid));
   } finally { db.close(); }
 }
@@ -471,19 +526,25 @@ export function estimateProjectUsage(dbPath: string, userId: number, input: Esti
     if (setup.projectId !== input.projectId) throw new Error("Configuration IA hors projet");
     const accountOwner = db.prepare("SELECT 1 FROM ai_accounts WHERE id = ? AND user_id = ?").get(setup.accountId, userId);
     if (!accountOwner) throw new Error("Compte IA refusé");
-    const inputTokens = estimateTokensFromText(input.inputText, setup.providerName);
-    const outputTokens = estimateTokensFromText(input.outputText, setup.providerName);
+    const estimatedInputTokens = estimateTokensFromText(input.inputText, setup.providerName);
+    const estimatedOutputTokens = estimateTokensFromText(input.outputText, setup.providerName);
+    const inputTokens = input.inputTokens == null || input.inputTokens <= 0 ? estimatedInputTokens : toNonNegativeInteger(input.inputTokens);
+    const outputTokens = input.outputTokens == null || input.outputTokens <= 0 ? estimatedOutputTokens : toNonNegativeInteger(input.outputTokens);
+    const cacheTokens = toNonNegativeInteger(input.cacheTokens ?? 0);
+    const reasoningTokens = toNonNegativeInteger(input.reasoningTokens ?? 0);
+    const billableInputTokens = inputTokens > 0 ? inputTokens : cacheTokens;
+    const billableOutputTokens = outputTokens > 0 ? outputTokens : reasoningTokens;
     const costEur = setup.connectionType === "api" && setup.inputPricePerMillion != null && setup.outputPricePerMillion != null
-      ? toNonNegativeMoney((inputTokens / 1_000_000) * setup.inputPricePerMillion + (outputTokens / 1_000_000) * setup.outputPricePerMillion)
+      ? toNonNegativeMoney((billableInputTokens / 1_000_000) * setup.inputPricePerMillion + (billableOutputTokens / 1_000_000) * setup.outputPricePerMillion)
       : 0;
     const label = input.label.trim() || "Estimation texte";
-    const result = db.prepare(`INSERT INTO ai_usage_entries(project_id, model_id, account_id, setup_id, label, input_tokens, output_tokens, cost_eur, estimation_method, used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'text_chars_approx', ?)`)
-      .run(input.projectId, setup.modelId, setup.accountId, setup.id, label, inputTokens, outputTokens, costEur, input.usedAt?.trim() || new Date().toISOString().slice(0, 10));
+    const result = db.prepare(`INSERT INTO ai_usage_entries(project_id, model_id, account_id, setup_id, label, input_tokens, output_tokens, cache_tokens, reasoning_tokens, cost_eur, estimation_method, used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'text_chars_approx', ?)` )
+      .run(input.projectId, setup.modelId, setup.accountId, setup.id, label, inputTokens, outputTokens, cacheTokens, reasoningTokens, costEur, input.usedAt?.trim() || new Date().toISOString().slice(0, 10));
     return usageById(db, Number(result.lastInsertRowid));
   } finally { db.close(); }
 }
 
-type ParsedUsageCandidate = { label: string; inputTokens: number; outputTokens: number; usedAt: string; method: string; forceZeroCost?: boolean };
+type ParsedUsageCandidate = { label: string; inputTokens: number; outputTokens: number; cacheTokens: number; reasoningTokens: number; usedAt: string; method: string; forceZeroCost?: boolean };
 function getPath(record: any, key: string) { return key.split(".").reduce((acc, part) => acc == null ? undefined : acc[part], record); }
 function pickFirstNumber(record: any, keys: string[]) {
   for (const key of keys) {
@@ -506,21 +567,22 @@ function normalizeUsageRecord(record: any, sourceName: string, fallbackDate: str
   const outputText = String(record.output_text ?? record.completion ?? record.response ?? "");
   const finalInput = inputTokens ?? estimateTokensFromText(inputText);
   const finalOutput = outputTokens ?? estimateTokensFromText(outputText);
+  const cacheTokens = pickFirstNumber(record, ["cache_tokens", "cached_tokens", "usage.cache_tokens", "usage.cached_tokens", "usage.input_tokens_details.cached_tokens", "usage.prompt_tokens_details.cached_tokens", "cacheTokens", "tokens.cache"]) ?? 0;
+  const reasoningTokens = pickFirstNumber(record, ["reasoning_tokens", "usage.reasoning_tokens", "usage.output_tokens_details.reasoning_tokens", "usage.completion_tokens_details.reasoning_tokens", "output_tokens_details.reasoning_tokens", "completion_tokens_details.reasoning_tokens", "usageMetadata.thoughtsTokenCount", "usage_metadata.thoughts_token_count", "thoughtsTokenCount", "reasoningTokens", "tokens.reasoning"]) ?? 0;
   if (finalInput + finalOutput <= 0) return null;
   const id = String(record.request_id ?? record.id ?? record.response_id ?? "").trim();
   const label = String(record.label ?? record.title ?? record.name ?? "").trim() || (id ? `${sourceName} · ${id}` : sourceName);
-  return { label, inputTokens: finalInput, outputTokens: finalOutput, usedAt: normalizeDate(record.used_at ?? record.timestamp ?? record.created_at ?? record.createdAt, fallbackDate), method: "json_usage_import" };
+  return { label, inputTokens: finalInput, outputTokens: finalOutput, cacheTokens, reasoningTokens, usedAt: normalizeDate(record.used_at ?? record.timestamp ?? record.created_at ?? record.createdAt, fallbackDate), method: "json_usage_import" };
 }
 function normalizeConnectorRecord(record: any, connector: UsageConnector, sourceName: string, fallbackDate: string): ParsedUsageCandidate | null {
   if (!record || typeof record !== "object") return null;
   if (connector === "generic") return normalizeUsageRecord(record, sourceName, fallbackDate);
-  if (connector === "hermes") throw new Error("Le connecteur HERMES local utilise importHermesLocalUsage");
-  const specs: Record<Exclude<UsageConnector, "generic" | "hermes">, { label: string; input: string[]; output: string[]; id: string[]; date: string[]; method: string; forceZeroCost?: boolean }> = {
-    openai: { label: "OpenAI", input: ["usage.input_tokens", "usage.prompt_tokens", "input_tokens", "prompt_tokens"], output: ["usage.output_tokens", "usage.completion_tokens", "output_tokens", "completion_tokens"], id: ["id", "request_id", "response_id"], date: ["created_at", "created", "timestamp"], method: "openai_usage_connector" },
-    anthropic: { label: "Anthropic", input: ["usage.input_tokens", "input_tokens"], output: ["usage.output_tokens", "output_tokens"], id: ["id", "message_id"], date: ["created_at", "createdAt", "timestamp"], method: "anthropic_usage_connector" },
-    google: { label: "Google Gemini", input: ["usageMetadata.promptTokenCount", "usage_metadata.prompt_token_count", "promptTokenCount"], output: ["usageMetadata.candidatesTokenCount", "usage_metadata.candidates_token_count", "candidatesTokenCount"], id: ["responseId", "id", "name"], date: ["createTime", "created_at", "timestamp"], method: "google_usage_connector" },
-    ollama: { label: "Ollama", input: ["prompt_eval_count", "usage.prompt_eval_count", "input_tokens"], output: ["eval_count", "usage.eval_count", "output_tokens"], id: ["id", "model"], date: ["created_at", "timestamp"], method: "ollama_local_connector", forceZeroCost: true },
-    local: { label: "Local", input: ["input_tokens", "prompt_tokens", "prompt_eval_count"], output: ["output_tokens", "completion_tokens", "eval_count"], id: ["id", "model", "name"], date: ["created_at", "timestamp"], method: "local_usage_connector", forceZeroCost: true },
+  const specs: Record<Exclude<UsageConnector, "generic">, { label: string; input: string[]; output: string[]; cache: string[]; reasoning: string[]; id: string[]; date: string[]; method: string; forceZeroCost?: boolean }> = {
+    openai: { label: "OpenAI", input: ["usage.input_tokens", "usage.prompt_tokens", "input_tokens", "prompt_tokens"], output: ["usage.output_tokens", "usage.completion_tokens", "output_tokens", "completion_tokens"], cache: ["usage.input_tokens_details.cached_tokens", "usage.prompt_tokens_details.cached_tokens", "input_tokens_details.cached_tokens", "prompt_tokens_details.cached_tokens", "cached_tokens", "cache_tokens"], reasoning: ["usage.output_tokens_details.reasoning_tokens", "usage.completion_tokens_details.reasoning_tokens", "output_tokens_details.reasoning_tokens", "completion_tokens_details.reasoning_tokens", "reasoning_tokens"], id: ["id", "request_id", "response_id"], date: ["created_at", "created", "timestamp"], method: "openai_usage_connector" },
+    anthropic: { label: "Anthropic", input: ["usage.input_tokens", "input_tokens"], output: ["usage.output_tokens", "output_tokens"], cache: ["usage.cache_read_input_tokens", "usage.cache_creation_input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "cached_tokens", "cache_tokens"], reasoning: ["usage.reasoning_tokens", "reasoning_tokens"], id: ["id", "message_id"], date: ["created_at", "createdAt", "timestamp"], method: "anthropic_usage_connector" },
+    google: { label: "Google Gemini", input: ["usageMetadata.promptTokenCount", "usage_metadata.prompt_token_count", "promptTokenCount"], output: ["usageMetadata.candidatesTokenCount", "usage_metadata.candidates_token_count", "candidatesTokenCount"], cache: ["usageMetadata.cachedContentTokenCount", "usage_metadata.cached_content_token_count", "cachedContentTokenCount", "cache_tokens"], reasoning: ["usageMetadata.thoughtsTokenCount", "usage_metadata.thoughts_token_count", "thoughtsTokenCount", "reasoning_tokens"], id: ["responseId", "id", "name"], date: ["createTime", "created_at", "timestamp"], method: "google_usage_connector" },
+    ollama: { label: "Ollama", input: ["prompt_eval_count", "usage.prompt_eval_count", "input_tokens"], output: ["eval_count", "usage.eval_count", "output_tokens"], cache: ["cache_tokens", "cached_tokens"], reasoning: ["reasoning_tokens"], id: ["id", "model"], date: ["created_at", "timestamp"], method: "ollama_local_connector", forceZeroCost: true },
+    local: { label: "Local", input: ["input_tokens", "prompt_tokens", "prompt_eval_count"], output: ["output_tokens", "completion_tokens", "eval_count"], cache: ["cache_tokens", "cached_tokens"], reasoning: ["reasoning_tokens"], id: ["id", "model", "name"], date: ["created_at", "timestamp"], method: "local_usage_connector", forceZeroCost: true },
   };
   const spec = specs[connector];
   const inputTokens = pickFirstNumber(record, spec.input);
@@ -529,10 +591,12 @@ function normalizeConnectorRecord(record: any, connector: UsageConnector, source
   const outputText = String(record.output_text ?? record.completion ?? record.response ?? "");
   const finalInput = inputTokens ?? estimateTokensFromText(inputText);
   const finalOutput = outputTokens ?? estimateTokensFromText(outputText);
+  const cacheTokens = pickFirstNumber(record, spec.cache) ?? 0;
+  const reasoningTokens = pickFirstNumber(record, spec.reasoning) ?? 0;
   if (finalInput + finalOutput <= 0) return null;
   const id = spec.id.map((key) => String(getPath(record, key) ?? "").trim()).find(Boolean);
   const rawDate = spec.date.map((key) => getPath(record, key)).find((value) => value != null);
-  return { label: id ? `${spec.label} · ${id}` : sourceName, inputTokens: finalInput, outputTokens: finalOutput, usedAt: normalizeDate(rawDate, fallbackDate), method: spec.method, forceZeroCost: spec.forceZeroCost };
+  return { label: id ? `${spec.label} · ${id}` : sourceName, inputTokens: finalInput, outputTokens: finalOutput, cacheTokens, reasoningTokens, usedAt: normalizeDate(rawDate, fallbackDate), method: spec.method, forceZeroCost: spec.forceZeroCost };
 }
 function flattenUsagePayload(payload: any): any[] {
   if (Array.isArray(payload)) return payload;
@@ -564,7 +628,7 @@ function parseTextUsage(raw: string, sourceName: string, fallbackDate: string): 
   const outputText = outputMatch?.[1]?.trim() || "";
   const inputTokens = estimateTokensFromText(inputText);
   const outputTokens = estimateTokensFromText(outputText);
-  return inputTokens + outputTokens > 0 ? [{ label: sourceName, inputTokens, outputTokens, usedAt: fallbackDate, method: "text_chars_approx_import" }] : [];
+  return inputTokens + outputTokens > 0 ? [{ label: sourceName, inputTokens, outputTokens, cacheTokens: 0, reasoningTokens: 0, usedAt: fallbackDate, method: "text_chars_approx_import" }] : [];
 }
 function parseAutomaticUsage(raw: string, sourceName: string, fallbackDate: string) {
   const jsonRecords = parseJsonUsage(raw, sourceName, fallbackDate);
@@ -586,10 +650,12 @@ function importParsedUsage(dbPath: string, userId: number, input: AutomaticUsage
     db.exec("BEGIN");
     try {
       for (const candidate of candidates) {
+        const billableInputTokens = candidate.inputTokens > 0 ? candidate.inputTokens : candidate.cacheTokens;
+        const billableOutputTokens = candidate.outputTokens > 0 ? candidate.outputTokens : candidate.reasoningTokens;
         const costEur = !candidate.forceZeroCost && setup.connectionType === "api" && setup.inputPricePerMillion != null && setup.outputPricePerMillion != null
-          ? toNonNegativeMoney((candidate.inputTokens / 1_000_000) * setup.inputPricePerMillion + (candidate.outputTokens / 1_000_000) * setup.outputPricePerMillion)
+          ? toNonNegativeMoney((billableInputTokens / 1_000_000) * setup.inputPricePerMillion + (billableOutputTokens / 1_000_000) * setup.outputPricePerMillion)
           : 0;
-        const result = db.prepare(`INSERT INTO ai_usage_entries(project_id, model_id, account_id, setup_id, label, input_tokens, output_tokens, cost_eur, estimation_method, used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(input.projectId, setup.modelId, setup.accountId, setup.id, candidate.label, candidate.inputTokens, candidate.outputTokens, costEur, candidate.method, candidate.usedAt || input.usedAt || new Date().toISOString().slice(0, 10));
+        const result = db.prepare(`INSERT INTO ai_usage_entries(project_id, model_id, account_id, setup_id, label, input_tokens, output_tokens, cache_tokens, reasoning_tokens, cost_eur, estimation_method, used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(input.projectId, setup.modelId, setup.accountId, setup.id, candidate.label, candidate.inputTokens, candidate.outputTokens, candidate.cacheTokens, candidate.reasoningTokens, costEur, candidate.method, candidate.usedAt || input.usedAt || new Date().toISOString().slice(0, 10));
         entries.push(usageById(db, Number(result.lastInsertRowid)));
       }
       db.exec("COMMIT");
@@ -751,9 +817,11 @@ export function previewUsageInbox(rootDir: string, usedAt?: string): UsageInboxP
       const candidates = parseConnectorUsage(rawExport, file.connector, fileName, fallbackDate);
       const inputTokens = candidates.reduce((sum, candidate) => sum + candidate.inputTokens, 0);
       const outputTokens = candidates.reduce((sum, candidate) => sum + candidate.outputTokens, 0);
-      return { connector: file.connector, fileName, sourcePath: file.path, sizeBytes: statSync(file.path).size, status: candidates.length ? "ready" as const : "failed" as const, detectedCount: candidates.length, inputTokens, outputTokens, totalTokens: inputTokens + outputTokens, sampleLabels: candidates.slice(0, 3).map((candidate) => candidate.label), errorMessage: candidates.length ? null : "Aucun usage importable détecté" };
+      const cacheTokens = candidates.reduce((sum, candidate) => sum + candidate.cacheTokens, 0);
+      const reasoningTokens = candidates.reduce((sum, candidate) => sum + candidate.reasoningTokens, 0);
+      return { connector: file.connector, fileName, sourcePath: file.path, sizeBytes: statSync(file.path).size, status: candidates.length ? "ready" as const : "failed" as const, detectedCount: candidates.length, inputTokens, outputTokens, cacheTokens, reasoningTokens, totalTokens: inputTokens + outputTokens, sampleLabels: candidates.slice(0, 3).map((candidate) => candidate.label), errorMessage: candidates.length ? null : "Aucun usage importable détecté" };
     } catch (error) {
-      return { connector: file.connector, fileName, sourcePath: file.path, sizeBytes: existsSync(file.path) ? statSync(file.path).size : 0, status: "failed" as const, detectedCount: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, sampleLabels: [], errorMessage: error instanceof Error ? error.message : "Aperçu refusé" };
+      return { connector: file.connector, fileName, sourcePath: file.path, sizeBytes: existsSync(file.path) ? statSync(file.path).size : 0, status: "failed" as const, detectedCount: 0, inputTokens: 0, outputTokens: 0, cacheTokens: 0, reasoningTokens: 0, totalTokens: 0, sampleLabels: [], errorMessage: error instanceof Error ? error.message : "Aperçu refusé" };
     }
   });
   return {
@@ -767,6 +835,8 @@ export function previewUsageInbox(rootDir: string, usedAt?: string): UsageInboxP
       detectedCount: files.reduce((sum, file) => sum + file.detectedCount, 0),
       inputTokens: files.reduce((sum, file) => sum + file.inputTokens, 0),
       outputTokens: files.reduce((sum, file) => sum + file.outputTokens, 0),
+      cacheTokens: files.reduce((sum, file) => sum + file.cacheTokens, 0),
+      reasoningTokens: files.reduce((sum, file) => sum + file.reasoningTokens, 0),
       totalTokens: files.reduce((sum, file) => sum + file.totalTokens, 0),
     },
   };
@@ -822,8 +892,8 @@ export function getUsageCollectorHealth(dbPath: string, userId: number, rootDir:
 }
 
 function usageById(db: DatabaseSync, entryId: number): UsageEntry {
-  return rowToEntry(db.prepare(`SELECT e.id, e.project_id as projectId, p.name as projectName, e.model_id as modelId, m.name as modelName, pr.name as providerName, e.label, e.input_tokens as inputTokens, e.output_tokens as outputTokens, e.cost_eur as costEur, e.used_at as usedAt
-    FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE e.id = ?`).get(entryId) as RawEntryRow);
+  return rowToEntry(db.prepare(`SELECT e.id, e.project_id as projectId, p.name as projectName, e.model_id as modelId, m.name as modelName, pr.name as providerName, e.label, e.input_tokens as inputTokens, e.output_tokens as outputTokens, e.cache_tokens as cacheTokens, e.reasoning_tokens as reasoningTokens, e.cost_eur as costEur, ${usageEstimatedCostSql("e")} as estimatedCostEur, e.used_at as usedAt
+    FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id LEFT JOIN project_ai_setups s ON s.id = e.setup_id LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE e.id = ?`).get(entryId) as RawEntryRow);
 }
 
 function csvEscape(value: unknown) {
@@ -836,8 +906,8 @@ function safeReportSlug(value: string) {
 function usageReportEntries(db: DatabaseSync, userId: number, projectId: number) {
   const project = db.prepare(`SELECT p.id, p.name FROM projects p JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ? WHERE p.id = ?`).get(userId, projectId) as RawProjectRow | undefined;
   if (!project) throw new Error("Accès projet refusé");
-  const entries = (db.prepare(`SELECT e.id, e.project_id as projectId, p.name as projectName, e.model_id as modelId, m.name as modelName, pr.name as providerName, e.label, e.input_tokens as inputTokens, e.output_tokens as outputTokens, e.cost_eur as costEur, e.used_at as usedAt
-    FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE e.project_id = ? ORDER BY e.used_at ASC, e.id ASC`).all(projectId) as RawEntryRow[]).map(rowToEntry);
+  const entries = (db.prepare(`SELECT e.id, e.project_id as projectId, p.name as projectName, e.model_id as modelId, m.name as modelName, pr.name as providerName, e.label, e.input_tokens as inputTokens, e.output_tokens as outputTokens, e.cache_tokens as cacheTokens, e.reasoning_tokens as reasoningTokens, e.cost_eur as costEur, ${usageEstimatedCostSql("e")} as estimatedCostEur, e.used_at as usedAt
+    FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id LEFT JOIN project_ai_setups s ON s.id = e.setup_id LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE e.project_id = ? ORDER BY e.used_at ASC, e.id ASC`).all(projectId) as RawEntryRow[]).map(rowToEntry);
   return { projectName: String(project.name), entries };
 }
 export function buildUsageReport(dbPath: string, userId: number, projectId: number, format: UsageReportFormat = "csv"): UsageReport {
@@ -849,18 +919,21 @@ export function buildUsageReport(dbPath: string, userId: number, projectId: numb
       entries: entries.length,
       inputTokens: entries.reduce((sum, entry) => sum + entry.inputTokens, 0),
       outputTokens: entries.reduce((sum, entry) => sum + entry.outputTokens, 0),
+      cacheTokens: entries.reduce((sum, entry) => sum + entry.cacheTokens, 0),
+      reasoningTokens: entries.reduce((sum, entry) => sum + entry.reasoningTokens, 0),
       totalTokens: entries.reduce((sum, entry) => sum + entry.totalTokens, 0),
       costEur: toNonNegativeMoney(entries.reduce((sum, entry) => sum + entry.costEur, 0)),
+      estimatedCostEur: toNonNegativeMoney(entries.reduce((sum, entry) => sum + entry.estimatedCostEur, 0)),
     };
     const normalizedFormat: UsageReportFormat = format === "json" ? "json" : "csv";
     const fileName = `rapport-consommation-tokens-${safeReportSlug(projectName)}-${generatedAt.slice(0, 10)}.${normalizedFormat}`;
     const content = normalizedFormat === "json"
       ? JSON.stringify({ projectId, projectName, generatedAt, totals, entries }, null, 2)
       : [
-          "date,projet,fournisseur,modele,libelle,input_tokens,output_tokens,total_tokens,cost_eur",
-          ...entries.map((entry) => [entry.usedAt, entry.projectName, entry.providerName || "", entry.modelName || "", entry.label, entry.inputTokens, entry.outputTokens, entry.totalTokens, entry.costEur.toFixed(6)].map(csvEscape).join(",")),
+          "date,projet,fournisseur,modele,libelle,input_tokens,output_tokens,cache_tokens,reasoning_tokens,total_tokens,cost_eur,estimated_cost_eur",
+          ...entries.map((entry) => [entry.usedAt, entry.projectName, entry.providerName || "", entry.modelName || "", entry.label, entry.inputTokens, entry.outputTokens, entry.cacheTokens, entry.reasoningTokens, entry.totalTokens, entry.costEur.toFixed(6), entry.estimatedCostEur.toFixed(6)].map(csvEscape).join(",")),
           "",
-          `TOTAL,${csvEscape(projectName)},,,,${totals.inputTokens},${totals.outputTokens},${totals.totalTokens},${totals.costEur.toFixed(6)}`,
+          `TOTAL,${csvEscape(projectName)},,,,${totals.inputTokens},${totals.outputTokens},${totals.cacheTokens},${totals.reasoningTokens},${totals.totalTokens},${totals.costEur.toFixed(6)}`,
         ].join("\n");
     return { projectId, projectName, generatedAt, format: normalizedFormat, mimeType: normalizedFormat === "json" ? "application/json; charset=utf-8" : "text/csv; charset=utf-8", fileName, totals, entries, content };
   } finally { db.close(); }
@@ -911,33 +984,146 @@ function withMaxRatio<T extends { totalTokens: number }>(rows: T[]) {
   const maxTokens = Math.max(0, ...rows.map((row) => row.totalTokens));
   return rows.map((row) => ({ ...row, maxRatio: maxTokens > 0 ? row.totalTokens / maxTokens : 0 }));
 }
-function _buildUsageChartData(db: DatabaseSync, userId: number, projectId: number): UsageChartData {
+export function normalizeUsageTimeRange(value?: string | null): UsageTimeRange {
+  return value === "24h" || value === "7d" || value === "30d" || value === "all" ? value : "all";
+}
+function usageTimeFilter(column: string, timeRange?: UsageTimeRange) {
+  const range = normalizeUsageTimeRange(timeRange);
+  if (range === "24h") return { range, clause: ` AND datetime(${column}) >= datetime('now', '-1 day')` };
+  if (range === "7d") return { range, clause: ` AND date(${column}) >= date('now', '-6 days')` };
+  if (range === "30d") return { range, clause: ` AND date(${column}) >= date('now', '-29 days')` };
+  return { range, clause: "" };
+}
+function _buildUsageChartData(db: DatabaseSync, userId: number, projectId: number, timeRange: UsageTimeRange = "all"): UsageChartData {
   const project = db.prepare(`SELECT p.id, p.name FROM projects p JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ? WHERE p.id = ?`).get(userId, projectId) as RawProjectRow | undefined;
   if (!project) throw new Error("Accès projet refusé");
-  const totalsRow = db.prepare(`SELECT count(*) as entries, coalesce(sum(input_tokens),0) as inputTokens, coalesce(sum(output_tokens),0) as outputTokens, coalesce(sum(input_tokens + output_tokens),0) as totalTokens, coalesce(sum(cost_eur),0) as costEur FROM ai_usage_entries WHERE project_id = ?`).get(projectId) as RawTotalsRow;
-  const dailyRows = db.prepare(`SELECT substr(used_at,1,10) as date, count(*) as entries, coalesce(sum(input_tokens),0) as inputTokens, coalesce(sum(output_tokens),0) as outputTokens, coalesce(sum(input_tokens + output_tokens),0) as totalTokens, coalesce(sum(cost_eur),0) as costEur FROM ai_usage_entries WHERE project_id = ? GROUP BY substr(used_at,1,10) ORDER BY date ASC`).all(projectId) as RawChartRow[];
-  const providerRows = db.prepare(`SELECT coalesce(pr.name,'IA') as name, count(*) as entries, coalesce(sum(e.input_tokens),0) as inputTokens, coalesce(sum(e.output_tokens),0) as outputTokens, coalesce(sum(e.input_tokens + e.output_tokens),0) as totalTokens, coalesce(sum(e.cost_eur),0) as costEur FROM ai_usage_entries e LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE e.project_id = ? GROUP BY coalesce(pr.name,'IA') ORDER BY totalTokens DESC, name ASC LIMIT 5`).all(projectId) as RawBreakdownRow[];
-  const modelRows = db.prepare(`SELECT coalesce(m.name,'Modèle') as name, count(*) as entries, coalesce(sum(e.input_tokens),0) as inputTokens, coalesce(sum(e.output_tokens),0) as outputTokens, coalesce(sum(e.input_tokens + e.output_tokens),0) as totalTokens, coalesce(sum(e.cost_eur),0) as costEur FROM ai_usage_entries e LEFT JOIN ai_models m ON m.id = e.model_id WHERE e.project_id = ? GROUP BY coalesce(m.name,'Modèle') ORDER BY totalTokens DESC, name ASC LIMIT 5`).all(projectId) as RawBreakdownRow[];
-  const normalize = (row: RawBreakdownRow) => ({ name: String(row.name), inputTokens: Number(row.inputTokens ?? 0), outputTokens: Number(row.outputTokens ?? 0), totalTokens: Number(row.totalTokens ?? 0), costEur: toNonNegativeMoney(Number(row.costEur ?? 0)), entries: Number(row.entries ?? 0) });
-  const normalizeDaily = (row: RawChartRow) => ({ date: String(row.date), inputTokens: Number(row.inputTokens ?? 0), outputTokens: Number(row.outputTokens ?? 0), totalTokens: Number(row.totalTokens ?? 0), costEur: toNonNegativeMoney(Number(row.costEur ?? 0)), entries: Number(row.entries ?? 0) });
+  const dateFilter = usageTimeFilter("used_at", timeRange);
+  const aliasedDateFilter = usageTimeFilter("e.used_at", timeRange);
+  const totalsRow = db.prepare(`SELECT count(*) as entries, coalesce(sum(input_tokens),0) as inputTokens, coalesce(sum(output_tokens),0) as outputTokens, coalesce(sum(cache_tokens),0) as cacheTokens, coalesce(sum(reasoning_tokens),0) as reasoningTokens, coalesce(sum(input_tokens + output_tokens),0) as totalTokens, coalesce(sum(cost_eur),0) as costEur FROM ai_usage_entries WHERE project_id = ?${dateFilter.clause}`).get(projectId) as RawTotalsRow;
+  const dailyRows = db.prepare(`SELECT substr(used_at,1,10) as date, count(*) as entries, coalesce(sum(input_tokens),0) as inputTokens, coalesce(sum(output_tokens),0) as outputTokens, coalesce(sum(cache_tokens),0) as cacheTokens, coalesce(sum(reasoning_tokens),0) as reasoningTokens, coalesce(sum(input_tokens + output_tokens),0) as totalTokens, coalesce(sum(cost_eur),0) as costEur FROM ai_usage_entries WHERE project_id = ?${dateFilter.clause} GROUP BY substr(used_at,1,10) ORDER BY date ASC`).all(projectId) as RawChartRow[];
+  const providerRows = db.prepare(`SELECT coalesce(pr.name,'IA') as name, count(*) as entries, coalesce(sum(e.input_tokens),0) as inputTokens, coalesce(sum(e.output_tokens),0) as outputTokens, coalesce(sum(e.cache_tokens),0) as cacheTokens, coalesce(sum(e.reasoning_tokens),0) as reasoningTokens, coalesce(sum(e.input_tokens + e.output_tokens),0) as totalTokens, coalesce(sum(e.cost_eur),0) as costEur FROM ai_usage_entries e LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE e.project_id = ?${aliasedDateFilter.clause} GROUP BY coalesce(pr.name,'IA') ORDER BY totalTokens DESC, name ASC LIMIT 5`).all(projectId) as RawBreakdownRow[];
+  const modelRows = db.prepare(`SELECT coalesce(m.name,'Modèle') as name, count(*) as entries, coalesce(sum(e.input_tokens),0) as inputTokens, coalesce(sum(e.output_tokens),0) as outputTokens, coalesce(sum(e.cache_tokens),0) as cacheTokens, coalesce(sum(e.reasoning_tokens),0) as reasoningTokens, coalesce(sum(e.input_tokens + e.output_tokens),0) as totalTokens, coalesce(sum(e.cost_eur),0) as costEur FROM ai_usage_entries e LEFT JOIN ai_models m ON m.id = e.model_id WHERE e.project_id = ?${aliasedDateFilter.clause} GROUP BY coalesce(m.name,'Modèle') ORDER BY totalTokens DESC, name ASC LIMIT 5`).all(projectId) as RawBreakdownRow[];
+  const normalize = (row: RawBreakdownRow) => ({ name: String(row.name), inputTokens: Number(row.inputTokens ?? 0), outputTokens: Number(row.outputTokens ?? 0), cacheTokens: Number(row.cacheTokens ?? 0), reasoningTokens: Number(row.reasoningTokens ?? 0), totalTokens: Number(row.totalTokens ?? 0), costEur: toNonNegativeMoney(Number(row.costEur ?? 0)), entries: Number(row.entries ?? 0) });
+  const normalizeDaily = (row: RawChartRow) => ({ date: String(row.date), inputTokens: Number(row.inputTokens ?? 0), outputTokens: Number(row.outputTokens ?? 0), cacheTokens: Number(row.cacheTokens ?? 0), reasoningTokens: Number(row.reasoningTokens ?? 0), totalTokens: Number(row.totalTokens ?? 0), costEur: toNonNegativeMoney(Number(row.costEur ?? 0)), entries: Number(row.entries ?? 0) });
   return {
     projectId: Number(project.id),
     projectName: String(project.name),
-    totals: { entries: Number(totalsRow.entries ?? 0), inputTokens: Number(totalsRow.inputTokens ?? 0), outputTokens: Number(totalsRow.outputTokens ?? 0), totalTokens: Number(totalsRow.totalTokens ?? 0), costEur: toNonNegativeMoney(Number(totalsRow.costEur ?? 0)) },
+    timeRange: dateFilter.range,
+    totals: { entries: Number(totalsRow.entries ?? 0), inputTokens: Number(totalsRow.inputTokens ?? 0), outputTokens: Number(totalsRow.outputTokens ?? 0), cacheTokens: Number(totalsRow.cacheTokens ?? 0), reasoningTokens: Number(totalsRow.reasoningTokens ?? 0), totalTokens: Number(totalsRow.totalTokens ?? 0), costEur: toNonNegativeMoney(Number(totalsRow.costEur ?? 0)) },
     daily: withMaxRatio(dailyRows.map(normalizeDaily)),
     topProviders: withMaxRatio(providerRows.map(normalize)),
     topModels: withMaxRatio(modelRows.map(normalize)),
   };
 }
 
-export function buildUsageChartData(dbPath: string, userId: number, projectId: number): UsageChartData {
+export function buildUsageChartData(dbPath: string, userId: number, projectId: number, timeRange: UsageTimeRange = "all"): UsageChartData {
   initDb(dbPath); const db = open(dbPath);
-  try { return _buildUsageChartData(db, userId, projectId); } finally { db.close(); }
+  try { return _buildUsageChartData(db, userId, projectId, timeRange); } finally { db.close(); }
+}
+
+const VISUAL_AGENT_COLORS = [
+  { color: "#00FFB2", glow: "rgba(0,255,178,.35)" },
+  { color: "#38B6FF", glow: "rgba(56,182,255,.35)" },
+  { color: "#FF6B6B", glow: "rgba(255,107,107,.32)" },
+  { color: "#A78BFA", glow: "rgba(167,139,250,.32)" },
+  { color: "#FBBF24", glow: "rgba(251,191,36,.28)" },
+];
+const DONUT_COLORS = ["#00FFB2", "#38B6FF", "#A78BFA", "#FBBF24", "#FF6B6B"];
+function visualAgentName(label: string | null, projectName: string | null) {
+  const raw = (label || projectName || "IA locale").trim();
+  const first = raw.split("·")[0]?.trim() || raw;
+  return first.replace(/\s+default$/i, "").trim() || "IA locale";
+}
+function visualModelName(label: string | null, modelName: string | null, providerName: string | null) {
+  const parts = (label || "").split("·").map((part) => part.trim()).filter(Boolean);
+  const labelModel = parts.find((part, index) => index > 0 && /^(gpt|claude|gemini|deepseek|llama|mistral|qwen|grok|o[0-9]|sonnet|opus|haiku)/i.test(part));
+  return labelModel || modelName || providerName || "Modèle non renseigné";
+}
+function normalizedScore(value: number, max: number) {
+  if (max <= 0 || value <= 0) return 0;
+  return Math.max(1, Math.min(100, Math.round((value / max) * 100)));
+}
+function _buildVisualDashboardData(db: DatabaseSync, userId: number, projectId?: number | null, timeRange: UsageTimeRange = "all"): VisualDashboardData {
+  const scope = db.prepare(`SELECT p.id FROM projects p JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ? WHERE (? IS NULL OR p.id = ?)`)
+    .all(userId, projectId ?? null, projectId ?? null) as { id: number }[];
+  if (projectId != null && scope.length === 0) throw new Error("Accès projet refusé");
+  const agentMap = new Map<string, RawVisualAgentRow>();
+  const dateFilter = usageTimeFilter("e.used_at", timeRange);
+  const entries = db.prepare(`SELECT e.label, p.name as projectName, m.name as modelName, pr.name as providerName, e.input_tokens as inputTokens, e.output_tokens as outputTokens, e.cache_tokens as cacheTokens, e.reasoning_tokens as reasoningTokens, e.cost_eur as costEur, e.used_at as usedAt
+    FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id JOIN project_members pm ON pm.project_id = e.project_id AND pm.user_id = ? LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE (? IS NULL OR e.project_id = ?)${dateFilter.clause}`)
+    .all(userId, projectId ?? null, projectId ?? null) as { label: string; projectName: string; modelName: string | null; providerName: string | null; inputTokens: number; outputTokens: number; cacheTokens: number; reasoningTokens: number; costEur: number; usedAt: string }[];
+  const modelsByAgent = new Map<string, Map<string, RawVisualModelRow>>();
+  for (const entry of entries) {
+    const agentName = visualAgentName(entry.label, entry.projectName);
+    const modelName = visualModelName(entry.label, entry.modelName, entry.providerName);
+    const tokens = Number(entry.inputTokens ?? 0) + Number(entry.outputTokens ?? 0);
+    const existing = agentMap.get(agentName) ?? { agentName, entries: 0, inputTokens: 0, outputTokens: 0, cacheTokens: 0, reasoningTokens: 0, totalTokens: 0, costEur: 0, lastUsed: "" };
+    existing.entries += 1;
+    existing.inputTokens += Number(entry.inputTokens ?? 0);
+    existing.outputTokens += Number(entry.outputTokens ?? 0);
+    existing.cacheTokens += Number(entry.cacheTokens ?? 0);
+    existing.reasoningTokens += Number(entry.reasoningTokens ?? 0);
+    existing.totalTokens += tokens;
+    existing.costEur += Number(entry.costEur ?? 0);
+    existing.lastUsed = existing.lastUsed > String(entry.usedAt) ? existing.lastUsed : String(entry.usedAt);
+    agentMap.set(agentName, existing);
+    const agentModels = modelsByAgent.get(agentName) ?? new Map<string, RawVisualModelRow>();
+    const model = agentModels.get(modelName) ?? { agentName, modelName, entries: 0, tokens: 0, costEur: 0, lastUsed: "" };
+    model.entries += 1;
+    model.tokens += tokens;
+    model.costEur += Number(entry.costEur ?? 0);
+    model.lastUsed = model.lastUsed > String(entry.usedAt) ? model.lastUsed : String(entry.usedAt);
+    agentModels.set(modelName, model);
+    modelsByAgent.set(agentName, agentModels);
+  }
+  const rows = [...agentMap.values()].sort((a, b) => b.totalTokens - a.totalTokens || a.agentName.localeCompare(b.agentName));
+  const max = {
+    input: Math.max(0, ...rows.map((row) => row.inputTokens)),
+    output: Math.max(0, ...rows.map((row) => row.outputTokens)),
+    cache: Math.max(0, ...rows.map((row) => row.cacheTokens)),
+    reasoning: Math.max(0, ...rows.map((row) => row.reasoningTokens)),
+    cost: Math.max(0, ...rows.map((row) => row.costEur)),
+    sessions: Math.max(0, ...rows.map((row) => row.entries)),
+  };
+  const agents = rows.map((row, index) => {
+    const palette = VISUAL_AGENT_COLORS[index % VISUAL_AGENT_COLORS.length];
+    const donutRaw = [
+      { label: "Input", value: Number(row.inputTokens), color: DONUT_COLORS[0] },
+      { label: "Output", value: Number(row.outputTokens), color: DONUT_COLORS[1] },
+      { label: "Cache", value: Number(row.cacheTokens), color: DONUT_COLORS[2] },
+      { label: "Reasoning", value: Number(row.reasoningTokens), color: DONUT_COLORS[3] },
+    ].filter((item) => item.value > 0);
+    const donutTotal = donutRaw.reduce((sum, item) => sum + item.value, 0);
+    return {
+      id: row.agentName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || `agent-${index + 1}`,
+      name: row.agentName,
+      color: palette.color,
+      glow: palette.glow,
+      radar: {
+        input: normalizedScore(row.inputTokens, max.input),
+        output: normalizedScore(row.outputTokens, max.output),
+        cache: normalizedScore(row.cacheTokens, max.cache),
+        reasoning: normalizedScore(row.reasoningTokens, max.reasoning),
+        cost: normalizedScore(row.costEur, max.cost),
+        sessions: normalizedScore(row.entries, max.sessions),
+      },
+      donut: donutRaw.map((item) => ({ ...item, pct: donutTotal > 0 ? Math.round((item.value / donutTotal) * 1000) / 10 : 0 })),
+      models: [...(modelsByAgent.get(row.agentName)?.values() ?? [])]
+        .sort((a, b) => b.tokens - a.tokens || a.modelName.localeCompare(b.modelName))
+        .slice(0, 8)
+        .map((model) => ({ name: model.modelName, tokens: Number(model.tokens), cost: toNonNegativeMoney(model.costEur), sessions: Number(model.entries), lastUsed: String(model.lastUsed || "").slice(0, 10) })),
+    };
+  });
+  return { timeRange: dateFilter.range, agents };
+}
+export function buildVisualDashboardData(dbPath: string, userId: number, projectId?: number | null, timeRange: UsageTimeRange = "all"): VisualDashboardData {
+  initDb(dbPath); const db = open(dbPath);
+  try { return _buildVisualDashboardData(db, userId, projectId, timeRange); } finally { db.close(); }
 }
 
 const USAGE_PAGE_SIZE = 30;
 
-export function listDashboardData(dbPath: string, userId: number, selectedProjectId?: number, page = 1) {
+export function listDashboardData(dbPath: string, userId: number, selectedProjectId?: number, page = 1, timeRange: UsageTimeRange = "all") {
   initDb(dbPath); seedDefaultProviders(dbPath); const db = open(dbPath);
   const projects = db.prepare(`SELECT p.id, p.name, p.description, p.owner_user_id as ownerUserId FROM projects p JOIN project_members pm ON pm.project_id = p.id WHERE pm.user_id = ? ORDER BY p.id DESC`).all(userId) as Project[];
   const providers = db.prepare("SELECT id, name, kind FROM ai_providers ORDER BY id").all() as Provider[];
@@ -946,20 +1132,177 @@ export function listDashboardData(dbPath: string, userId: number, selectedProjec
   const aiAccounts = (db.prepare(`SELECT a.id, a.user_id as userId, a.provider_id as providerId, p.name as providerName, a.name, a.connection_type as connectionType, a.subscription_name as subscriptionName, a.monthly_cost_eur as monthlyCostEur, a.notes FROM ai_accounts a LEFT JOIN ai_providers p ON p.id = a.provider_id WHERE a.user_id = ? ORDER BY a.id DESC`).all(userId) as RawAccountRow[]).map(rowToAccount);
   const projectAiSetups = selectedProject ? (db.prepare(`SELECT s.id, s.project_id as projectId, p.name as projectName, s.account_id as accountId, a.name as accountName, pr.name as providerName, s.model_id as modelId, m.name as modelName, s.connection_type as connectionType, a.subscription_name as subscriptionName, a.monthly_cost_eur as monthlyCostEur, s.input_price_per_million as inputPricePerMillion, s.output_price_per_million as outputPricePerMillion, s.label
     FROM project_ai_setups s JOIN projects p ON p.id = s.project_id JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = ? JOIN ai_accounts a ON a.id = s.account_id LEFT JOIN ai_providers pr ON pr.id = a.provider_id LEFT JOIN ai_models m ON m.id = s.model_id WHERE s.project_id = ? ORDER BY s.id DESC`).all(userId, selectedProject.id) as RawSetupRow[]).map(rowToSetup) : [];
-  const usage = db.prepare(`SELECT coalesce(sum(input_tokens + output_tokens),0) as tokens, coalesce(sum(cost_eur),0) as cost FROM ai_usage_entries e JOIN project_members pm ON pm.project_id = e.project_id WHERE pm.user_id = ?`).get(userId) as RawUsageSumRow;
-  const projectUsage = selectedProject ? db.prepare(`SELECT coalesce(sum(input_tokens + output_tokens),0) as tokens, coalesce(sum(cost_eur),0) as cost FROM ai_usage_entries WHERE project_id = ?`).get(selectedProject.id) as RawUsageSumRow : { tokens: 0, cost: 0 };
+  const range = normalizeUsageTimeRange(timeRange);
+  const usageDateFilter = usageTimeFilter("e.used_at", range);
+  const projectDateFilter = usageTimeFilter("used_at", range);
+  const usage = db.prepare(`SELECT coalesce(sum(input_tokens + output_tokens),0) as tokens, coalesce(sum(cost_eur),0) as cost FROM ai_usage_entries e JOIN project_members pm ON pm.project_id = e.project_id WHERE pm.user_id = ?${usageDateFilter.clause}`).get(userId) as RawUsageSumRow;
+  const projectUsage = selectedProject ? db.prepare(`SELECT coalesce(sum(input_tokens + output_tokens),0) as tokens, coalesce(sum(cost_eur),0) as cost FROM ai_usage_entries WHERE project_id = ?${projectDateFilter.clause}`).get(selectedProject.id) as RawUsageSumRow : { tokens: 0, cost: 0 };
   const subscriptionMonthly = projectAiSetups.reduce((sum, setup) => sum + (setup.connectionType === "subscription" ? setup.monthlyCostEur : 0), 0);
-  const safePage = Math.max(1, Math.round(page));
+  const safePage = Number.isFinite(page) ? Math.max(1, Math.round(page)) : 1;
   const offset = (safePage - 1) * USAGE_PAGE_SIZE;
-  const totalUsageRow = db.prepare(`SELECT count(*) as total FROM ai_usage_entries e JOIN project_members pm ON pm.project_id = e.project_id AND pm.user_id = ? WHERE (? IS NULL OR e.project_id = ?)`).get(userId, selectedProject?.id ?? null, selectedProject?.id ?? null) as { total: number };
+  const totalUsageRow = db.prepare(`SELECT count(*) as total FROM ai_usage_entries e JOIN project_members pm ON pm.project_id = e.project_id AND pm.user_id = ? WHERE (? IS NULL OR e.project_id = ?)${usageDateFilter.clause}`).get(userId, selectedProject?.id ?? null, selectedProject?.id ?? null) as { total: number };
   const totalUsageEntries = Number(totalUsageRow.total ?? 0);
-  const usageEntries = (db.prepare(`SELECT e.id, e.project_id as projectId, p.name as projectName, e.model_id as modelId, m.name as modelName, pr.name as providerName, e.label, e.input_tokens as inputTokens, e.output_tokens as outputTokens, e.cost_eur as costEur, e.used_at as usedAt FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id JOIN project_members pm ON pm.project_id = e.project_id AND pm.user_id = ? LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE (? IS NULL OR e.project_id = ?) ORDER BY e.used_at DESC, e.id DESC LIMIT ? OFFSET ?`).all(userId, selectedProject?.id ?? null, selectedProject?.id ?? null, USAGE_PAGE_SIZE, offset) as RawEntryRow[]).map(rowToEntry);
-  const usageCharts = selectedProject ? _buildUsageChartData(db, userId, selectedProject.id) : null;
+  const usageEntries = (db.prepare(`SELECT e.id, e.project_id as projectId, p.name as projectName, e.model_id as modelId, m.name as modelName, pr.name as providerName, e.label, e.input_tokens as inputTokens, e.output_tokens as outputTokens, e.cache_tokens as cacheTokens, e.reasoning_tokens as reasoningTokens, e.cost_eur as costEur, ${usageEstimatedCostSql("e")} as estimatedCostEur, e.used_at as usedAt FROM ai_usage_entries e JOIN projects p ON p.id = e.project_id JOIN project_members pm ON pm.project_id = e.project_id AND pm.user_id = ? LEFT JOIN project_ai_setups s ON s.id = e.setup_id LEFT JOIN ai_models m ON m.id = e.model_id LEFT JOIN ai_providers pr ON pr.id = m.provider_id WHERE (? IS NULL OR e.project_id = ?)${usageDateFilter.clause} ORDER BY e.used_at DESC, e.id DESC LIMIT ? OFFSET ?`).all(userId, selectedProject?.id ?? null, selectedProject?.id ?? null, USAGE_PAGE_SIZE, offset) as RawEntryRow[]).map(rowToEntry);
+  const usageCharts = selectedProject ? _buildUsageChartData(db, userId, selectedProject.id, range) : null;
+  const visualDashboard = _buildVisualDashboardData(db, userId, selectedProject?.id ?? null, range);
   db.close();
-  return { projects, providers, models, aiAccounts, projectAiSetups, selectedProject, usageEntries, totalUsageEntries, usagePage: safePage, usagePageSize: USAGE_PAGE_SIZE, usageCharts, usage: { tokens: Number(usage.tokens), cost: toNonNegativeMoney(Number(usage.cost)) }, projectUsage: { tokens: Number(projectUsage.tokens), cost: toNonNegativeMoney(Number(projectUsage.cost)), subscriptionMonthly } };
+  return { projects, providers, models, aiAccounts, projectAiSetups, selectedProject, timeRange: range, usageEntries, totalUsageEntries, usagePage: safePage, usagePageSize: USAGE_PAGE_SIZE, usageCharts, visualDashboard, usage: { tokens: Number(usage.tokens), cost: toNonNegativeMoney(Number(usage.cost)) }, projectUsage: { tokens: Number(projectUsage.tokens), cost: toNonNegativeMoney(Number(projectUsage.cost)), subscriptionMonthly } };
 }
 
 export const DB_PATH = defaultDbPath;
 export const USAGE_INBOX_DIR = defaultUsageInboxDir;
 export const USAGE_REPORTS_DIR = defaultUsageReportsDir;
-export const HERMES_STATE_DB_PATH = defaultHermesStateDbPath;
+
+// ─── Agents ───────────────────────────────────────────────────────────────────
+
+export type AgentProvider = "deepseek" | "openrouter" | "openai";
+export type AgentStatus = "active" | "inactive" | "error";
+export type Agent = {
+  id: string;
+  userEmail: string;
+  name: string;
+  provider: AgentProvider;
+  model: string;
+  status: AgentStatus;
+  createdAt: string;
+  lastTestAt: string | null;
+};
+
+type RawAgentRow = {
+  id: string;
+  user_email: string;
+  name: string;
+  provider: string;
+  model: string;
+  status: string;
+  created_at: string;
+  last_test_at: string | null;
+};
+
+function xorCipher(input: string, secret: string): string {
+  if (!secret) return input;
+  const inputBuf = Buffer.from(input, "utf8");
+  const secretBuf = Buffer.from(secret, "utf8");
+  const result = Buffer.alloc(inputBuf.length);
+  for (let i = 0; i < inputBuf.length; i++) {
+    result[i] = inputBuf[i] ^ secretBuf[i % secretBuf.length];
+  }
+  return result.toString("base64");
+}
+
+function encryptApiKey(key: string): string {
+  return xorCipher(key, process.env.NEXTAUTH_SECRET ?? "");
+}
+
+export function decryptApiKey(encrypted: string): string {
+  const buf = Buffer.from(encrypted, "base64");
+  const secret = process.env.NEXTAUTH_SECRET ?? "";
+  const secretBuf = Buffer.from(secret, "utf8");
+  const result = Buffer.alloc(buf.length);
+  for (let i = 0; i < buf.length; i++) {
+    result[i] = buf[i] ^ secretBuf[i % secretBuf.length];
+  }
+  return result.toString("utf8");
+}
+
+function initAgentsTable(db: ReturnType<typeof open>) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS agents (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      name TEXT NOT NULL,
+      provider TEXT NOT NULL CHECK(provider IN ('deepseek','openrouter','openai')),
+      model TEXT NOT NULL,
+      api_key_encrypted TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'inactive' CHECK(status IN ('active','inactive','error')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_test_at TEXT
+    );
+  `);
+}
+
+function rowToAgent(row: RawAgentRow): Agent {
+  return {
+    id: String(row.id),
+    userEmail: String(row.user_email),
+    name: String(row.name),
+    provider: row.provider as AgentProvider,
+    model: String(row.model),
+    status: row.status as AgentStatus,
+    createdAt: String(row.created_at),
+    lastTestAt: row.last_test_at ? String(row.last_test_at) : null,
+  };
+}
+
+export function createAgent(
+  dbPath: string,
+  userEmail: string,
+  name: string,
+  provider: AgentProvider,
+  model: string,
+  apiKey: string
+): Agent {
+  const db = open(dbPath);
+  try {
+    initAgentsTable(db);
+    const id = randomBytes(8).toString("hex");
+    const encryptedKey = encryptApiKey(apiKey);
+    db.prepare(
+      `INSERT INTO agents(id, user_email, name, provider, model, api_key_encrypted) VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(id, userEmail.toLowerCase(), name.trim(), provider, model.trim(), encryptedKey);
+    return rowToAgent(
+      db.prepare(`SELECT id, user_email, name, provider, model, status, created_at, last_test_at FROM agents WHERE id = ?`).get(id) as RawAgentRow
+    );
+  } finally {
+    db.close();
+  }
+}
+
+export function getAgentsByUser(dbPath: string, userEmail: string): Agent[] {
+  const db = open(dbPath);
+  try {
+    initAgentsTable(db);
+    const rows = db.prepare(
+      `SELECT id, user_email, name, provider, model, status, created_at, last_test_at FROM agents WHERE user_email = ? ORDER BY created_at DESC`
+    ).all(userEmail.toLowerCase()) as RawAgentRow[];
+    return rows.map(rowToAgent);
+  } finally {
+    db.close();
+  }
+}
+
+export function getAgentApiKey(dbPath: string, id: string, userEmail: string): string | null {
+  const db = open(dbPath);
+  try {
+    initAgentsTable(db);
+    const row = db.prepare(`SELECT api_key_encrypted FROM agents WHERE id = ? AND user_email = ?`).get(id, userEmail.toLowerCase()) as { api_key_encrypted: string } | undefined;
+    if (!row) return null;
+    return decryptApiKey(row.api_key_encrypted);
+  } finally {
+    db.close();
+  }
+}
+
+export function updateAgentStatus(dbPath: string, id: string, userEmail: string, status: AgentStatus): boolean {
+  const db = open(dbPath);
+  try {
+    initAgentsTable(db);
+    const result = db.prepare(
+      `UPDATE agents SET status = ?, last_test_at = datetime('now') WHERE id = ? AND user_email = ?`
+    ).run(status, id, userEmail.toLowerCase());
+    return result.changes > 0;
+  } finally {
+    db.close();
+  }
+}
+
+export function deleteAgent(dbPath: string, id: string, userEmail: string): boolean {
+  const db = open(dbPath);
+  try {
+    initAgentsTable(db);
+    const result = db.prepare(`DELETE FROM agents WHERE id = ? AND user_email = ?`).run(id, userEmail.toLowerCase());
+    return result.changes > 0;
+  } finally {
+    db.close();
+  }
+}

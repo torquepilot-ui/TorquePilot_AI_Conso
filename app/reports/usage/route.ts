@@ -1,14 +1,13 @@
-import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { DB_PATH, USAGE_REPORTS_DIR, saveUsageReportFile, type UsageReportFormat } from "../../../lib/db";
-import { readSession } from "../../../lib/session";
+import { auth } from "../../../lib/auth";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  const jar = await cookies();
-  const userId = readSession(jar.get("tp_session")?.value);
-  if (!userId) return NextResponse.json({ error: "Connexion requise" }, { status: 401 });
+  const session = await auth();
+  const userId = (session as Record<string, unknown> | null)?.dbUserId;
+  if (typeof userId !== "number") return NextResponse.json({ error: "Connexion requise" }, { status: 401 });
 
   const url = new URL(request.url);
   const projectId = Number(url.searchParams.get("project") || 0);

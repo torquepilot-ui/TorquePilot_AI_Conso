@@ -1,47 +1,35 @@
 "use server";
 
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { makeSession, readSession } from "../lib/session";
+import { auth, signIn, signOut } from "../lib/auth";
 import {
   DB_PATH, USAGE_INBOX_DIR, USAGE_REPORTS_DIR,
-  assignAiAccountToProject, createAiAccount, createProject, createUser,
+  assignAiAccountToProject, createAiAccount, createProject,
   deleteAiAccount, deleteProject, deleteProjectAiSetup, deleteSavedUsageReport,
-  estimateProjectUsage, importConnectorUsage, importHermesLocalUsage, importUsageInbox, resolveHermesProfileStateDbPath,
-  updateAiAccount, updateProject, updateProjectAiSetup, verifyUser,
+  estimateProjectUsage, importAutomaticUsage, importConnectorUsage, importUsageInbox,
+  updateAiAccount, updateProject, updateProjectAiSetup,
 } from "../lib/db";
 import { checkProviderConnection, type ProviderConnectionStatus } from "../lib/provider-api";
 
-async function setSession(userId: number) {
-  const jar = await cookies();
-  jar.set("tp_session", makeSession(userId), { httpOnly: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 30 });
+export async function currentUserId(): Promise<number | null> {
+  const session = await auth();
+  const id = (session as Record<string, unknown> | null)?.dbUserId;
+  return typeof id === "number" ? id : null;
 }
 
-export async function currentUserId() {
-  const jar = await cookies();
-  return readSession(jar.get("tp_session")?.value);
+export async function googleSignInAction() {
+  await signIn("google", { redirectTo: "/" });
 }
 
-export async function registerAction(formData: FormData) {
-  const email = String(formData.get("email") || "");
-  const password = String(formData.get("password") || "");
-  if (!email || password.length < 8) redirect("/?error=Mot de passe minimum 8 caractères");
-  try { const user = createUser(DB_PATH, email, password); await setSession(user.id); } catch (err) { console.error("[registerAction]", err); redirect("/?error=Compte déjà existant ou saisie invalide"); }
-  redirect("/");
+function safeReturnTo(formData: FormData, fallback: string) {
+  const value = String(formData.get("returnTo") || "");
+  return value.startsWith("/") && !value.startsWith("//") ? value : fallback;
 }
 
-export async function loginAction(formData: FormData) {
-  const user = verifyUser(DB_PATH, String(formData.get("email") || ""), String(formData.get("password") || ""));
-  if (!user) redirect("/?error=Connexion refusée");
-  await setSession(user.id);
-  redirect("/");
-}
 
 export async function logoutAction() {
-  const jar = await cookies();
-  jar.delete("tp_session");
-  redirect("/");
+  await signOut({ redirectTo: "/" });
 }
 
 export async function createProjectAction(formData: FormData) {
@@ -171,6 +159,10 @@ export async function estimateUsageAction(formData: FormData) {
       label: String(formData.get("label") || ""),
       inputText: String(formData.get("inputText") || ""),
       outputText: String(formData.get("outputText") || ""),
+      inputTokens: Number(formData.get("inputTokens") || 0),
+      outputTokens: Number(formData.get("outputTokens") || 0),
+      cacheTokens: Number(formData.get("cacheTokens") || 0),
+      reasoningTokens: Number(formData.get("reasoningTokens") || 0),
       usedAt: String(formData.get("usedAt") || ""),
     });
     revalidatePath("/");
@@ -182,6 +174,7 @@ export async function importUsageAction(formData: FormData) {
   const userId = await currentUserId();
   if (!userId) redirect("/");
   const projectId = Number(formData.get("projectId") || 0);
+  const returnTo = safeReturnTo(formData, `/?project=${projectId || ""}`);
   try {
     importConnectorUsage(DB_PATH, userId, {
       connector: String(formData.get("connector") || "generic") as any,
@@ -192,7 +185,27 @@ export async function importUsageAction(formData: FormData) {
       usedAt: String(formData.get("usedAt") || ""),
     });
     revalidatePath("/");
-  } catch (err) { console.error("[importUsageAction]", err); redirect(`/?project=${projectId || ""}&error=Import automatique refusé`); }
+    revalidatePath("/collecte");
+  } catch (err) { console.error("[importUsageAction]", err); redirect(`${returnTo}${returnTo.includes("?") ? "&" : "?"}error=Import automatique refusé`); }
+  redirect(returnTo);
+}
+
+export async function importFallbackUsageAction(formData: FormData) {
+  const userId = await currentUserId();
+  if (!userId) redirect("/");
+  const projectId = Number(formData.get("projectId") || 0);
+  const label = String(formData.get("label") || "").trim();
+  const rawExport = String(formData.get("rawExport") || "").trim();
+  try {
+    importAutomaticUsage(DB_PATH, userId, {
+      projectId,
+      setupId: Number(formData.get("setupId") || 0),
+      sourceName: label || "Fallback conversation isolée",
+      rawExport,
+      usedAt: String(formData.get("usedAt") || ""),
+    });
+    revalidatePath("/");
+  } catch (err) { console.error("[importFallbackUsageAction]", err); redirect(`/?project=${projectId || ""}&error=Fallback import refusé`); }
   redirect(`/?project=${projectId}`);
 }
 
@@ -200,11 +213,13 @@ export async function importInboxAction(formData: FormData) {
   const userId = await currentUserId();
   if (!userId) redirect("/");
   const projectId = Number(formData.get("projectId") || 0);
+  const returnTo = safeReturnTo(formData, `/?project=${projectId || ""}`);
   try {
     importUsageInbox(DB_PATH, userId, { rootDir: USAGE_INBOX_DIR, projectId, setupId: Number(formData.get("setupId") || 0), usedAt: String(formData.get("usedAt") || "") });
     revalidatePath("/");
-  } catch (err) { console.error("[importInboxAction]", err); redirect(`/?project=${projectId || ""}&error=Import dossier refusé`); }
-  redirect(`/?project=${projectId}`);
+    revalidatePath("/collecte");
+  } catch (err) { console.error("[importInboxAction]", err); redirect(`${returnTo}${returnTo.includes("?") ? "&" : "?"}error=Import dossier refusé`); }
+  redirect(returnTo);
 }
 
 
@@ -229,11 +244,13 @@ export async function deleteSavedReportAction(formData: FormData) {
   const userId = await currentUserId();
   if (!userId) redirect("/");
   const projectId = Number(formData.get("projectId") || 0);
+  const returnTo = safeReturnTo(formData, `/?project=${projectId || ""}`);
   try {
     deleteSavedUsageReport(USAGE_REPORTS_DIR, String(formData.get("fileName") || ""));
     revalidatePath("/");
-  } catch (err) { console.error("[deleteSavedReportAction]", err); redirect(`/?project=${projectId || ""}&error=Suppression rapport refusée`); }
-  redirect(`/?project=${projectId || ""}`);
+    revalidatePath("/collecte");
+  } catch (err) { console.error("[deleteSavedReportAction]", err); redirect(`${returnTo}${returnTo.includes("?") ? "&" : "?"}error=Suppression rapport refusée`); }
+  redirect(returnTo);
 }
 
 export async function getOpenAiStatusAction(): Promise<ProviderConnectionStatus> {

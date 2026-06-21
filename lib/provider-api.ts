@@ -44,3 +44,69 @@ export async function checkProviderConnection(
   }
   return { ok: false, provider: providerName, status: "error", message: `Fournisseur ${providerName} non supporté` };
 }
+
+export type ProviderTestResult = { success: boolean; models?: string[]; error?: string };
+
+export async function checkDeepSeekConnection(
+  apiKey: string,
+  fetchImpl: typeof fetch = fetch
+): Promise<ProviderTestResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
+  try {
+    const res = await fetchImpl("https://api.deepseek.com/v1/models", {
+      method: "GET",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: controller.signal,
+    });
+    if (res.ok) {
+      const data = await res.json() as { data?: { id: string }[] };
+      const models = (data?.data ?? []).map((m) => m.id).filter(Boolean);
+      return { success: true, models };
+    }
+    if (res.status === 401 || res.status === 403) return { success: false, error: "Clé API invalide ou non autorisée" };
+    return { success: false, error: `Erreur HTTP ${res.status}` };
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") return { success: false, error: "Délai de connexion dépassé" };
+    return { success: false, error: "Erreur réseau ou hôte inaccessible" };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function checkOpenRouterConnection(
+  apiKey: string,
+  fetchImpl: typeof fetch = fetch
+): Promise<ProviderTestResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
+  try {
+    const res = await fetchImpl("https://openrouter.ai/api/v1/models", {
+      method: "GET",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: controller.signal,
+    });
+    if (res.ok) {
+      const data = await res.json() as { data?: { id: string }[] };
+      const models = (data?.data ?? []).map((m) => m.id).filter(Boolean);
+      return { success: true, models };
+    }
+    if (res.status === 401 || res.status === 403) return { success: false, error: "Clé API invalide ou non autorisée" };
+    return { success: false, error: `Erreur HTTP ${res.status}` };
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") return { success: false, error: "Délai de connexion dépassé" };
+    return { success: false, error: "Erreur réseau ou hôte inaccessible" };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function testProviderConnection(
+  provider: "deepseek" | "openrouter",
+  apiKey: string,
+  fetchImpl: typeof fetch = fetch
+): Promise<ProviderTestResult> {
+  if (provider === "deepseek") return checkDeepSeekConnection(apiKey, fetchImpl);
+  if (provider === "openrouter") return checkOpenRouterConnection(apiKey, fetchImpl);
+  return { success: false, error: `Provider ${provider} non supporté` };
+}

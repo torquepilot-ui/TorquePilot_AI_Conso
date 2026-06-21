@@ -32,7 +32,9 @@ import {
   getUsageCollectorHealth,
   buildUsageReport,
   saveUsageReportFile,
+  normalizeUsageTimeRange,
   buildUsageChartData,
+  buildVisualDashboardData,
   listSavedUsageReports,
   readSavedUsageReport,
   deleteSavedUsageReport,
@@ -224,6 +226,34 @@ test("modification et suppression des comptes IA et affectations projet", () => 
   }
 });
 
+test("cockpit visuel agrège agents, radar normalisé, donut et modèles depuis SQLite", () => {
+  const { dbPath, cleanup } = tempDb();
+  try {
+    initDb(dbPath);
+    seedDefaultProviders(dbPath);
+    const user = createUser(dbPath, "visual@example.local", "secret-test");
+    const project = createProject(dbPath, user.id, "TorquePilot", "Cockpit");
+    const modelId = listDashboardData(dbPath, user.id).models[0].id;
+    recordUsageEntry(dbPath, user.id, { projectId: project.id, modelId, label: "HERMES default · gpt-5.5 · telegram", inputTokens: 1000, outputTokens: 500, cacheTokens: 200, reasoningTokens: 50, costEur: 0.123456, usedAt: "2026-05-20" });
+    recordUsageEntry(dbPath, user.id, { projectId: project.id, modelId, label: "BEES LAB · claude-sonnet · telegram", inputTokens: 400, outputTokens: 100, cacheTokens: 0, reasoningTokens: 10, costEur: 0.02, usedAt: "2026-05-19" });
+
+    const visual = buildVisualDashboardData(dbPath, user.id, project.id);
+    assert.equal(visual.agents.length, 2);
+    const hermes = visual.agents.find((agent) => agent.name === "HERMES")!;
+    assert.ok(hermes);
+    assert.equal(hermes.radar.input, 100);
+    assert.equal(hermes.radar.output, 100);
+    assert.equal(hermes.radar.cost, 100);
+    assert.deepEqual(hermes.donut.map((item) => item.label), ["Input", "Output", "Cache", "Reasoning"]);
+    assert.equal(hermes.models[0].name, "gpt-5.5");
+    assert.equal(hermes.models[0].tokens, 1500);
+    assert.equal(hermes.models[0].lastUsed, "2026-05-20");
+    assert.equal(listDashboardData(dbPath, user.id, project.id).visualDashboard.agents.length, 2);
+  } finally {
+    cleanup();
+  }
+});
+
 test("suppression compte IA conserve l'historique usage et retire les liens", () => {
   const { dbPath, cleanup } = tempDb();
   try {
@@ -301,6 +331,14 @@ test("retrait IA affectée conserve l'historique usage et retire le lien", () =>
 test("interface publique sans mention KIRO", () => {
   const page = readFileSync(join(process.cwd(), "app", "page.tsx"), "utf8");
   assert.equal(/KIRO/i.test(page), false);
+});
+
+test("section consommation : sélection projet via query string", () => {
+  const page = readFileSync(join(process.cwd(), "app", "consommation", "page.tsx"), "utf8");
+  assert.match(page, /searchParams/);
+  assert.match(page, /name=\"project\"/);
+  assert.match(page, /listDashboardData\(DB_PATH, user\.id, selectedProjectId/);
+  assert.match(page, /action=\"\/consommation\"/);
 });
 
 test("estimation automatique tokens/coût pour configuration API", () => {
@@ -387,6 +425,39 @@ test("Phase 4B : import automatique texte brut estime les tokens sans coût manu
     assert.equal(result.totalOutputTokens, estimateTokensFromText("r".repeat(800)));
     assert.equal(result.totalCostEur, 0);
     assert.equal(result.entries[0].label, "Conversation collée");
+  } finally {
+    cleanup();
+  }
+});
+
+test("Fallback connecté : import automatique accepte JSON générique et texte brut", () => {
+  const { dbPath, cleanup } = tempDb();
+  try {
+    initDb(dbPath);
+    seedDefaultProviders(dbPath);
+    const user = createUser(dbPath, "rudy@example.local", "secret-test");
+    const project = createProject(dbPath, user.id, "TorquePilot fallback", "Secours universel");
+    const data = listDashboardData(dbPath, user.id);
+    const openai = data.providers.find((p) => p.name === "OpenAI")!;
+    const gpt = data.models.find((m) => m.name === "GPT-4.1")!;
+    const account = createAiAccount(dbPath, user.id, { providerId: openai.id, name: "Fallback API", connectionType: "api" });
+    const setup = assignAiAccountToProject(dbPath, user.id, { projectId: project.id, accountId: account.id, modelId: gpt.id, connectionType: "api" });
+
+    const genericJson = JSON.stringify({ label: "fallback json", input_tokens: 1000, output_tokens: 250, cache_tokens: 50, reasoning_tokens: 25, used_at: "2026-05-10" });
+    const jsonResult = importAutomaticUsage(dbPath, user.id, { projectId: project.id, setupId: setup.id, sourceName: "Fallback JSON", rawExport: genericJson, usedAt: "2026-05-09" });
+    assert.equal(jsonResult.importedCount, 1);
+    assert.equal(jsonResult.totalInputTokens, 1000);
+    assert.equal(jsonResult.totalOutputTokens, 250);
+    assert.equal(jsonResult.entries[0].cacheTokens, 50);
+    assert.equal(jsonResult.entries[0].reasoningTokens, 25);
+    assert.equal(jsonResult.entries[0].usedAt, "2026-05-10");
+    assert.equal(jsonResult.totalCostEur, 0.004);
+
+    const textResult = importAutomaticUsage(dbPath, user.id, { projectId: project.id, setupId: setup.id, sourceName: "Fallback texte", rawExport: `User: ${"a".repeat(120)}\nAssistant: ${"b".repeat(240)}`, usedAt: "2026-05-11" });
+    assert.equal(textResult.importedCount, 1);
+    assert.ok(textResult.totalInputTokens > 0);
+    assert.ok(textResult.totalOutputTokens > 0);
+    assert.equal(textResult.entries[0].usedAt, "2026-05-11");
   } finally {
     cleanup();
   }
@@ -597,7 +668,9 @@ test("Phase 4F : rapport consommation exportable CSV et sauvegardé", () => {
     assert.equal(report.totals.totalTokens, 1500);
     assert.equal(report.totals.inputTokens, 1200);
     assert.equal(report.totals.outputTokens, 300);
-    assert.match(report.content, /date,projet,fournisseur,modele,libelle,input_tokens,output_tokens,total_tokens,cost_eur/);
+    assert.equal(report.totals.costEur > 0, true);
+    assert.equal(report.totals.estimatedCostEur >= report.totals.costEur, true);
+    assert.match(report.content, /date,projet,fournisseur,modele,libelle,input_tokens,output_tokens,cache_tokens,reasoning_tokens,total_tokens,cost_eur,estimated_cost_eur/);
     assert.match(report.content, /resp_report/);
     assert.equal(report.mimeType, "text/csv; charset=utf-8");
     assert.throws(() => buildUsageReport(dbPath, other.id, project.id, "csv"), /Accès projet refusé/);
@@ -667,9 +740,9 @@ test("Phase 4H : agrégats graphiques isolés par projet et utilisateur", () => 
     const setup = assignAiAccountToProject(dbPath, user.id, { projectId: project.id, accountId: account.id, modelId: gpt.id, connectionType: "api" });
     const otherSetup = assignAiAccountToProject(dbPath, user.id, { projectId: otherProject.id, accountId: account.id, modelId: gpt.id, connectionType: "api" });
 
-    importConnectorUsage(dbPath, user.id, { connector: "openai", projectId: project.id, setupId: setup.id, sourceName: "jour 1", usedAt: "2026-05-08", rawExport: JSON.stringify({ id: "a", usage: { input_tokens: 1000, output_tokens: 500 } }) });
-    importConnectorUsage(dbPath, user.id, { connector: "openai", projectId: project.id, setupId: setup.id, sourceName: "jour 2", usedAt: "2026-05-09", rawExport: JSON.stringify({ id: "b", usage: { input_tokens: 2000, output_tokens: 1000 } }) });
-    importConnectorUsage(dbPath, user.id, { connector: "openai", projectId: otherProject.id, setupId: otherSetup.id, sourceName: "hors scope", usedAt: "2026-05-09", rawExport: JSON.stringify({ id: "c", usage: { input_tokens: 9000, output_tokens: 9000 } }) });
+    importConnectorUsage(dbPath, user.id, { connector: "openai", projectId: project.id, setupId: setup.id, sourceName: "jour 1", usedAt: "2000-05-08", rawExport: JSON.stringify({ id: "a", usage: { input_tokens: 1000, output_tokens: 500, input_tokens_details: { cached_tokens: 300 }, output_tokens_details: { reasoning_tokens: 80 } } }) });
+    importConnectorUsage(dbPath, user.id, { connector: "openai", projectId: project.id, setupId: setup.id, sourceName: "jour 2", usedAt: "2000-05-09", rawExport: JSON.stringify({ id: "b", usage: { input_tokens: 2000, output_tokens: 1000, input_tokens_details: { cached_tokens: 500 }, output_tokens_details: { reasoning_tokens: 120 } } }) });
+    importConnectorUsage(dbPath, user.id, { connector: "openai", projectId: otherProject.id, setupId: otherSetup.id, sourceName: "hors scope", usedAt: "2000-05-09", rawExport: JSON.stringify({ id: "c", usage: { input_tokens: 9000, output_tokens: 9000, input_tokens_details: { cached_tokens: 9000 }, output_tokens_details: { reasoning_tokens: 9000 } } }) });
 
     const charts = buildUsageChartData(dbPath, user.id, project.id);
 
@@ -677,13 +750,41 @@ test("Phase 4H : agrégats graphiques isolés par projet et utilisateur", () => 
     assert.equal(charts.totals.entries, 2);
     assert.equal(charts.totals.inputTokens, 3000);
     assert.equal(charts.totals.outputTokens, 1500);
+    assert.equal(charts.totals.cacheTokens, 800);
+    assert.equal(charts.totals.reasoningTokens, 200);
     assert.equal(charts.totals.totalTokens, 4500);
     assert.equal(charts.daily.length, 2);
-    assert.deepEqual(charts.daily.map((d) => [d.date, d.totalTokens]), [["2026-05-08", 1500], ["2026-05-09", 3000]]);
+    assert.deepEqual(charts.daily.map((d) => [d.date, d.totalTokens, d.cacheTokens, d.reasoningTokens]), [["2000-05-08", 1500, 300, 80], ["2000-05-09", 3000, 500, 120]]);
     assert.equal(charts.daily[1].maxRatio, 1);
     assert.equal(charts.topProviders[0].name, "OpenAI");
     assert.equal(charts.topProviders[0].totalTokens, 4500);
+    assert.equal(charts.topProviders[0].cacheTokens, 800);
     assert.equal(charts.topModels[0].name, "GPT-4.1");
+    assert.equal(normalizeUsageTimeRange("bogus"), "all");
+
+    const rangeAll = listDashboardData(dbPath, user.id, project.id, 1, "all");
+    const range30d = listDashboardData(dbPath, user.id, project.id, 1, "30d");
+    const range7d = listDashboardData(dbPath, user.id, project.id, 1, "7d");
+    const range24h = listDashboardData(dbPath, user.id, project.id, 1, "24h");
+    assert.equal(rangeAll.timeRange, "all");
+    assert.equal(rangeAll.usageCharts?.timeRange, "all");
+    assert.equal(rangeAll.visualDashboard.timeRange, "all");
+    assert.equal(rangeAll.projectUsage.tokens, 4500);
+    assert.equal(range30d.timeRange, "30d");
+    assert.equal(range30d.projectUsage.tokens, 0);
+    assert.equal(range7d.timeRange, "7d");
+    assert.equal(range7d.projectUsage.tokens, 0);
+    assert.equal(range24h.timeRange, "24h");
+    assert.equal(range24h.projectUsage.tokens, 0);
+
+    const charts30d = buildUsageChartData(dbPath, user.id, project.id, "30d");
+    assert.equal(charts30d.timeRange, "30d");
+    assert.equal(charts30d.totals.entries, 0);
+    assert.equal(charts30d.daily.length, 0);
+
+    const visual30d = buildVisualDashboardData(dbPath, user.id, project.id, "30d");
+    assert.equal(visual30d.timeRange, "30d");
+    assert.equal(visual30d.agents.length, 0);
     assert.throws(() => buildUsageChartData(dbPath, other.id, project.id), /Accès projet refusé/);
   } finally {
     cleanup();
