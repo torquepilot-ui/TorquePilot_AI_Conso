@@ -8,6 +8,7 @@ import {
   assignAiAccountToProject, createAiAccount, createProject,
   deleteAiAccount, deleteProject, deleteProjectAiSetup, deleteSavedUsageReport,
   estimateProjectUsage, importAutomaticUsage, importConnectorUsage, importUsageInbox,
+  importHermesLocalUsage, resolveHermesProfileStateDbPath,
   updateAiAccount, updateProject, updateProjectAiSetup,
 } from "../lib/db";
 import { checkProviderConnection, type ProviderConnectionStatus } from "../lib/provider-api";
