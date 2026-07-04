@@ -35,6 +35,14 @@ export default async function AgentsPage() {
     { title: String(summary.agents.totalSetups), body: "agents affectés au projet actif", status: "Affectations" },
     { title: `${summary.agents.apiSetups}/${summary.agents.subscriptionSetups}/${summary.agents.localSetups}`, body: "API / abonnement / local", status: "Mix" },
   ]}>
+    <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.5rem" }}>
+      <a href="/agents/new" style={{
+        display: "inline-flex", alignItems: "center", gap: "0.5rem",
+        background: "#38B6FF", color: "#0a0a0f", fontWeight: 700,
+        padding: "0.6rem 1.25rem", borderRadius: 8, textDecoration: "none",
+        fontSize: "0.9rem", transition: "opacity .15s",
+      }}>+ Nouvel agent</a>
+    </div>
     <section className="agentsHeroGrid">
       <article className="panel agentsHeroCard">
         <div className="sectionHeader"><div><p className="eyebrow">Portefeuille agents</p><h2>{summary.projects.selected}</h2></div><span className="pill">{visualAgentCount} actif(s)</span></div>

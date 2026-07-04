@@ -23,7 +23,7 @@ export default function DashboardSectionPage({
         <span className="badge">Section dédiée</span>
       </section>
       <section className="grid sectionCards">
-        {cards.map((card) => <article className="card sectionCard" key={card.title}>
+         {cards.map((card, i) => <article className="card sectionCard" key={`${card.title}-${i}`}>
           <span>{card.status}</span>
           <strong>{card.title}</strong>
           <small>{card.body}</small>

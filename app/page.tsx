@@ -1,9 +1,7 @@
-import { redirect } from "next/navigation";
 import { DB_PATH, getUserById, getMonthlyKpi } from "../lib/db";
 import { auth } from "../lib/auth";
-import { currentUserId } from "./actions";
+import { currentUserId, googleSignInAction } from "./actions";
 import DashboardShell from "../components/DashboardShell";
-import LandingPage from "../components/LandingPage";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -21,11 +19,40 @@ function monthLabel() {
 export default async function Home() {
   const userId = await currentUserId();
   const user = userId ? getUserById(DB_PATH, userId) : null;
-  if (!user) {
-    return <LandingPage />;
-  }
 
   const session = await auth();
+  if (!session?.user?.email) {
+    return (
+      <main style={{ minHeight: "100vh", background: "#0a0a0f", color: "#e8e8f0", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "system-ui, sans-serif" }}>
+        <div style={{ textAlign: "center", maxWidth: 400 }}>
+          <h1 style={{ fontSize: "1.6rem", fontWeight: 700, color: "#fff", marginBottom: "0.75rem" }}>TorquePilot AI</h1>
+          <p style={{ color: "#8888aa", marginBottom: "1.5rem" }}>Connectez-vous pour accéder à votre dashboard</p>
+          <form action={googleSignInAction}>
+            <button
+              type="submit"
+              style={{
+                display: "inline-block", background: "#38B6FF", color: "#0a0a0f",
+                padding: "0.75rem 1.75rem", borderRadius: 8, fontWeight: 700,
+                border: "none", fontSize: "1rem", cursor: "pointer", transition: "opacity .2s",
+              }}
+            >
+              Se connecter avec Gmail
+            </button>
+          </form>
+        </div>
+      </main>
+    );
+  }
+
+  if (!user) {
+    // Le user Google existe en session mais pas en DB — on attend la création par le callback JWT
+    return (
+      <main style={{ minHeight: "100vh", background: "#0a0a0f", color: "#e8e8f0", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "system-ui, sans-serif" }}>
+        <p style={{ color: "#8888aa" }}>Configuration de votre compte en cours...</p>
+      </main>
+    );
+  }
+
   const googleUser = session?.user;
 
   const budget = Math.max(1, Number(process.env.BUDGET_MENSUEL_EUR ?? 150));
